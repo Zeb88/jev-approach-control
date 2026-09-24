@@ -1,0 +1,4 @@
+# Never upload secrets or the local-only server
+.env
+.env.*
+server.js

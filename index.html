@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jev Approach Control</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #000; color: #3f3; font: 14px monospace; display: flex; flex-wrap: wrap; gap: 16px; padding: 16px; }
+  header { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; border-bottom: 1px solid #063; padding-bottom: 8px; }
+  h1 { margin: 0; font-size: 22px; letter-spacing: 1px; }
+  header p { margin: 4px 0 0; color: #9c9; max-width: 80ch; line-height: 1.4; }
+  a { color: #6cf; }
+  canvas { background: #020; border: 1px solid #3f3; width: min(800px, 100%, calc(100vh - 130px)); aspect-ratio: 1; min-width: 280px; }
+  #side { flex: 1 1 300px; max-width: 480px; display: flex; flex-direction: column; gap: 8px; }
+  input, button { background: #010; color: #3f3; border: 1px solid #3f3; font: inherit; font-size: 16px; padding: 8px; }
+  button { cursor: pointer; }
+  #log { flex: 1 1 0; min-height: 35vh; overflow-y: auto; white-space: pre-wrap; border: 1px solid #3f3; padding: 8px; }
+  #log .atc { color: #7df0d0; } /* controller calls (you or Jev), vs green aircraft readbacks */
+  @media (max-width: 700px) { body { padding: 8px; gap: 8px; } #side { max-width: none; } }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>JEV APPROACH CONTROL</h1>
+    <p>A small air traffic control sim for runway 27. Give radio calls in plain English, or hand the frequency to Jev, TypeSafe's decision model, and watch it sequence, space and land the traffic.</p>
+  </div>
+  <nav><a href="/info">How it works →</a> · by <a href="https://github.com/Zeb88" target="_blank" rel="noopener">Zeb88</a> · unofficial demo, not affiliated with TypeSafe AI</nav>
+</header>
+<canvas id="radar" width="800" height="800"></canvas>
+<div id="side">
+  <div id="score">Landed: 0 · Lost: 0</div>
+  <input id="cmd" placeholder="e.g. United 42 heading 270, descend 3000, reduce 180 knots" autofocus>
+  <button id="jev">Jev ATC: OFF</button>
+  <div id="log">Runway 27 (land westbound). Get planes below 3000 ft, heading ~270, east of the runway, then clear them to land.
+Keep 1000 ft or 2 miles apart. Or hand the frequency to Jev.
+</div>
+</div>
+<script>
+const cv = document.getElementById("radar"), ctx = cv.getContext("2d");
+const logEl = document.getElementById("log"), scoreEl = document.getElementById("score");
+const RWY = { x: 440, y: 400, len: 80 }; // threshold; runway extends west
+const AIRLINES = { AAL: "American", UAL: "United", DAL: "Delta", SWA: "Southwest", BAW: "Speedbird" };
+const MI = 20; // px per mile
+const TURN_RATE = 12; // deg/s — ~3 mi turn radius at 250 kts
+let planes = [], landed = 0, lost = 0, over = false, spawnTimer = 0;
+let jevAtc = false, jevBusy = false, jevTimer = 0;
+let sessionEnd = null, sessionOver = false; // Jev time limit, enforced by the server; this only mirrors it
+
+function endSession(msg) {
+  if (sessionOver) return;
+  sessionOver = true; jevAtc = false;
+  const btn = document.getElementById("jev"), cmd = document.getElementById("cmd");
+  btn.disabled = cmd.disabled = true;
+  btn.textContent = "Jev time is up";
+  cmd.placeholder = "Jev time is up. Come back tomorrow!";
+  if (msg) log(msg);
+}
+
+const log = (m) => {
+  const line = document.createElement("span");
+  line.textContent = m + "\n";
+  if (m.startsWith("> ") || m.startsWith("JEV →")) line.className = "atc";
+  logEl.append(line); logEl.scrollTop = 1e9;
+};
+const norm = (h) => ((h % 360) + 360) % 360;
+const bearing = (from, to) => norm(Math.atan2(to.x - from.x, from.y - to.y) * 180 / Math.PI);
+const aligned = (p) => Math.abs(norm(p.hdg - 270 + 180) - 180) < 40;
+const onFinalCourse = (p) => { const dx = p.x - RWY.x; return dx > 0 && dx < 220 && Math.abs(p.y - RWY.y) < 25 && aligned(p); };
+
+function spawn() {
+  const codes = Object.keys(AIRLINES), code = codes[Math.random() * codes.length | 0];
+  const cs = code + (10 + Math.random() * 990 | 0);
+  if (planes.some(p => p.cs === cs)) return;
+  const a = Math.random() * Math.PI * 2;
+  const x = 400 + Math.cos(a) * 390, y = 400 + Math.sin(a) * 390;
+  const hdg = bearing({ x, y }, { x: 400, y: 400 });
+  const alt = 5000 + (Math.random() * 6 | 0) * 1000;
+  planes.push({ cs, name: `${AIRLINES[code]} ${cs.slice(3)}`, x, y, hdg, tHdg: hdg, alt, tAlt: alt, spd: 250, tSpd: 250, cleared: false, mode: null, trail: [] });
+  log(`${cs}: with you, ${alt} ft, heading ${Math.round(hdg)}, 250 knots.`);
+}
+
+// Code flies the approach geometry; Jev only decides *who* flies it.
+function flyApproach(p) {
+  const dx = p.x - RWY.x, dy = p.y - RWY.y;
+  if (p.leg === "final" && dx < 0) p.leg = null; // passed the runway uncleared: go around
+  if (p.leg !== "final") {
+    const base = { x: RWY.x + 300, y: RWY.y + (Math.sign(dy) || 1) * 100 }; // turn point east of the runway
+    if (dx > 300 || Math.hypot(p.x - base.x, p.y - base.y) < 40) p.leg = "final";
+    else p.tHdg = bearing(p, base);
+  }
+  if (p.leg === "final") p.tHdg = bearing(p, { x: p.x - 120, y: RWY.y }); // pursue the extended centerline westbound
+  if (p.tAlt > 3000) p.tAlt = 3000;
+  p.tSpd = Math.min(p.tSpd, speedLimit(p));
+}
+// Procedure speed limits: 180 kts inside ~16 mi on approach, 210 kts in the hold.
+const speedLimit = (p) => p.mode === "approach" && p.x - RWY.x < 320 ? 180 : p.mode === "hold" ? 210 : 300;
+
+function step(dt) {
+  if ((spawnTimer -= dt) <= 0) { spawn(); spawnTimer = 18; }
+  if (jevAtc && !jevBusy && (jevTimer -= dt) <= 0) {
+    jevTimer = 4; jevBusy = true;
+    jevControl().catch(e => log(`[Jev ATC failed] ${e}`)).finally(() => jevBusy = false);
+  }
+  for (const p of planes) {
+    const dx = p.x - RWY.x, dy = p.y - RWY.y;
+    if (p.cleared && p.alt <= 3000 && onFinalCourse(p) || p.tAlt === 0) { // localizer captured
+      p.tHdg = bearing(p, RWY); p.tAlt = 0; p.tSpd = 160; p.mode = null;
+      if (Math.hypot(dx, dy) < 6) { p.done = "landed"; landed++; log(`${p.cs} landed. Nice.`); }
+    } else if (p.mode === "approach") flyApproach(p);
+    else if (p.mode === "hold") { // orbit a fix kept well inside the radar
+      p.tHdg = Math.hypot(p.x - p.fix.x, p.y - p.fix.y) > 50 ? bearing(p, p.fix) : norm(p.hdg + 30);
+      p.tSpd = Math.min(p.tSpd, speedLimit(p));
+    }
+    const diff = norm(p.tHdg - p.hdg + 180) - 180;
+    p.hdg = norm(p.hdg + Math.sign(diff) * Math.min(Math.abs(diff), TURN_RATE * dt));
+    p.alt += Math.sign(p.tAlt - p.alt) * Math.min(Math.abs(p.tAlt - p.alt), 300 * dt);
+    p.spd += Math.sign(p.tSpd - p.spd) * Math.min(Math.abs(p.tSpd - p.spd), 5 * dt);
+    const r = p.hdg * Math.PI / 180, spd = p.spd / 14; // 250 kts ≈ 18 px/s
+    if ((p.t = (p.t || 0) + dt) > 2) { p.t = 0; p.trail.push([p.x, p.y]); if (p.trail.length > 6) p.trail.shift(); }
+    p.x += Math.sin(r) * spd * dt; p.y -= Math.cos(r) * spd * dt;
+    if (!p.done && (p.x < -10 || p.x > 810 || p.y < -10 || p.y > 810)) { p.done = "lost"; lost++; log(`${p.cs} left your airspace. Lost.`); }
+  }
+  for (const a of planes) for (const b of planes) {
+    if (a === b || a.done || b.done) continue;
+    const d = Math.hypot(a.x - b.x, a.y - b.y), v = Math.abs(a.alt - b.alt);
+    a.conflict = a.conflict || (d < 40 && v < 1000);
+    if (!over && d < 8 && v < 300) { over = true; log(`*** COLLISION ${a.cs} / ${b.cs}. Game over. Reload to retry. ***`); }
+  }
+  planes = planes.filter(p => !p.done);
+  const left = sessionEnd && Math.max(0, Math.ceil((sessionEnd - Date.now()) / 1000));
+  if (sessionEnd && !left) endSession("Your Jev time is up. The radar keeps running, but Jev is off frequency. Come back tomorrow!");
+  scoreEl.textContent = `Landed: ${landed} · Lost: ${lost}` + (sessionEnd ? ` · Jev time ${left / 60 | 0}:${String(left % 60).padStart(2, "0")}` : "");
+}
+
+function draw() {
+  ctx.clearRect(0, 0, 800, 800);
+  ctx.font = `${Math.min(22, Math.round(11 * 800 / cv.clientWidth))}px monospace`; // stay legible when the canvas is scaled down
+  const lh = parseInt(ctx.font);
+  ctx.strokeStyle = "#063"; for (let r = 100; r < 600; r += 100) { ctx.beginPath(); ctx.arc(400, 400, r, 0, 7); ctx.stroke(); }
+  ctx.strokeStyle = "#fff"; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(RWY.x, RWY.y); ctx.lineTo(RWY.x - RWY.len, RWY.y); ctx.stroke();
+  ctx.strokeStyle = "#555"; ctx.lineWidth = 1; ctx.setLineDash([4, 6]); ctx.beginPath(); ctx.moveTo(RWY.x, RWY.y); ctx.lineTo(RWY.x + 220, RWY.y); ctx.stroke(); ctx.setLineDash([]);
+  for (const p of planes) {
+    ctx.fillStyle = p.conflict ? "#f33" : p.cleared ? "#6cf" : "#3f3";
+    for (const [x, y] of p.trail) ctx.fillRect(x - 1, y - 1, 2, 2);
+    ctx.fillRect(p.x - 3, p.y - 3, 6, 6);
+    const r = p.hdg * Math.PI / 180;
+    ctx.strokeStyle = ctx.fillStyle; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + Math.sin(r) * 20, p.y - Math.cos(r) * 20); ctx.stroke();
+    ctx.fillText(p.cs, p.x + 8, p.y - 8);
+    ctx.fillText(`${String(Math.round(p.alt / 100)).padStart(3, "0")} ${String(Math.round(p.hdg) || 360).padStart(3, "0")}`, p.x + 8, p.y - 8 + lh);
+    ctx.fillText(`${Math.round(p.spd)}kt ${{ approach: "APP", hold: "HLD" }[p.mode] || ""}`, p.x + 8, p.y - 8 + lh * 2);
+    p.conflict = false;
+  }
+}
+
+let last = performance.now();
+(function loop(now) {
+  const dt = Math.min((now - last) / 1000, 0.1); last = now;
+  if (!over) step(dt);
+  draw();
+  requestAnimationFrame(loop);
+})(last);
+
+// --- Jev: typed decisions for radio parsing and for the autonomous controller ---
+const HEADINGS = Array.from({ length: 36 }, (_, i) => String((i + 1) * 10).padStart(3, "0"));
+const ALTS = Array.from({ length: 10 }, (_, i) => String((i + 1) * 1000));
+const SPEEDS = Array.from({ length: 15 }, (_, i) => String(160 + i * 10));
+const choice = (instructions, values, none) => ({ type: "choice", instructions,
+  criteria: Object.fromEntries([...values.map(v => [v, null]), ["none", none]]) });
+
+async function ask(state, questions) {
+  if (sessionOver) throw new Error("Your Jev time is up.");
+  if (location.protocol === "file:") throw new Error("Open the game via the server (node server.js → http://localhost:3000), not as a file.");
+  const res = await fetch("/api/jev", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ state, questions }) })
+    .catch(() => { throw new Error("Can't reach server.js — is `node server.js` running?"); });
+  const rem = res.headers.get("X-Session-Remaining");
+  if (rem !== null) sessionEnd = Date.now() + rem * 1000;
+  const out = await res.json();
+  if (out.error === "session_expired") { endSession(); throw new Error(out.message); }
+  if (out.error === "rate_limited") {
+    if (out.retry_after > 300) endSession(); // daily cap: done for today
+    else jevTimer = out.retry_after;       // per-minute cap: Jev ATC waits it out
+    throw new Error(out.message);
+  }
+  if (!res.ok) throw new Error(`Jev ${res.status}: ${JSON.stringify(out)}`);
+  return out.answers;
+}
+
+// Confidence-gated: an unsure instruction is skipped rather than applied. Returns what changed.
+function apply(p, a) {
+  const ok = (x) => x && x.choice !== "none" && x.confidence >= 0.5;
+  const acks = [];
+  if (ok(a.heading) && +a.heading.choice % 360 !== Math.round(p.tHdg)) { p.tHdg = +a.heading.choice % 360; p.mode = null; acks.push(`heading ${a.heading.choice}`); }
+  if (ok(a.altitude) && +a.altitude.choice !== p.tAlt) { p.tAlt = +a.altitude.choice; acks.push(`${a.altitude.choice} ft`); }
+  if (ok(a.speed) && +a.speed.choice !== p.tSpd) { p.tSpd = +a.speed.choice; acks.push(`${a.speed.choice} knots`); }
+  if (a.land && a.land.noul > 0.5 && !p.cleared) { p.cleared = true; acks.push("cleared to land runway 27"); }
+  return acks;
+}
+
+async function radio(text) {
+  if (!planes.length) return log("No traffic.");
+  const none = "The controller did not give this instruction";
+  const a = await ask(
+    { radio_transmission: text, aircraft_on_frequency: planes.map(p => ({ callsign: p.cs, spoken_as: p.name, heading: Math.round(p.hdg), altitude_ft: Math.round(p.alt), speed_kts: Math.round(p.spd) })) },
+    {
+      callsign: { type: "choice", instructions: "Which aircraft in `aircraft_on_frequency` is the controller addressing in `radio_transmission`?",
+                  criteria: Object.fromEntries([...planes.map(p => [p.cs, `Spoken as "${p.name}"`]), ["none", "No listed aircraft is addressed"]]) },
+      heading: choice("What heading (degrees) is the aircraft instructed to fly?", HEADINGS, none),
+      altitude: choice("What altitude (feet) is the aircraft instructed to climb or descend to?", ALTS, none),
+      speed: choice("What speed (knots) is the aircraft instructed to fly? For 'reduce/increase speed by N', add or subtract N from its current speed_kts.", SPEEDS, none),
+      land: { type: "noul", instructions: "Is the aircraft cleared to land?" },
+    });
+  const p = planes.find(p => p.cs === a.callsign.choice);
+  if (!p || a.callsign.confidence < 0.5) return log(`??? Station calling, say again.`);
+  const acks = apply(p, a);
+  log(acks.length ? `${p.cs}: ${acks.join(", ")}.` : `${p.cs}: say again?`);
+}
+
+// Jev as the controller: one batched call. Jev makes the sequencing/safety decisions
+// (who approaches, who holds, who must avoid traffic, who is cleared); code flies them.
+const JEV_ATC_CONF = 0.35; // hand-tuned against jev-1.13; raise if Jev acts erratically, lower if it freezes
+async function jevControl() {
+  const active = planes.filter(p => p.tAlt !== 0); // planes on the localizer need nothing
+  if (!active.length) return;
+  const r1 = (v) => Math.round(v * 10) / 10;
+  const nearest = (p) => planes.filter(o => o !== p).sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y))[0];
+  const toRwy = (p) => Math.hypot(p.x - RWY.x, p.y - RWY.y);
+  const ahead = (p) => planes.filter(o => o !== p && (o.mode === "approach" || o.tAlt === 0) && toRwy(o) < toRwy(p))
+    .sort((a, b) => toRwy(b) - toRwy(a))[0]; // the approaching aircraft directly in front
+  const state = {
+    role: "You are the approach controller for runway 27. Land every aircraft one at a time without conflicts.",
+    procedure: "Aircraft on plan 'approach' are flown automatically onto final. Put only a few aircraft on approach at once, the ones closest to the runway, and make the rest hold until the aircraft ahead is well established on final. An aircraft must be cleared to land once it is established on final.",
+    separation: "Aircraft must stay at least 2 miles or 1000 ft apart.",
+    aircraft: active.map(p => {
+      const n = nearest(p);
+      return { callsign: p.cs, plan: p.mode || "none", altitude_ft: Math.round(p.alt), speed_kts: Math.round(p.spd),
+        distance_to_runway_miles: r1(Math.hypot(p.x - RWY.x, p.y - RWY.y) / MI), established_on_final: onFinalCourse(p) && p.alt <= 3000,
+        cleared_to_land: p.cleared, aircraft_on_approach_closer_to_runway: planes.filter(o => o !== p && (o.mode === "approach" || o.tAlt === 0) && toRwy(o) < toRwy(p)).length,
+        aircraft_ahead: (a => a ? { callsign: a.cs, distance_miles: r1(Math.hypot(a.x - p.x, a.y - p.y) / MI), speed_kts: Math.round(a.spd) } : null)(ahead(p)),
+        nearest_traffic: n ? { callsign: n.cs, distance_miles: r1(Math.hypot(n.x - p.x, n.y - p.y) / MI), altitude_diff_ft: Math.round(n.alt - p.alt) } : null };
+    }),
+  };
+  const questions = {};
+  for (const p of active) {
+    questions[`${p.cs}|plan`] = { type: "choice", instructions: { aircraft: p.cs, question: "What should `aircraft` do now?" }, criteria: {
+      approach: "Fly the approach to land. For the aircraft closest to the runway, or when at most one aircraft on approach is ahead of it.",
+      hold: "Circle in place to wait, because two or more aircraft on approach are already ahead of it.",
+      avoid: "Turn away and change altitude by 1000 ft, because nearest_traffic is closer than 3 miles and less than 1000 ft apart vertically.",
+    } };
+    questions[`${p.cs}|speed`] = { type: "choice", instructions: { aircraft: p.cs, question: "What speed should `aircraft` be assigned to keep spacing behind `aircraft_ahead`?" }, criteria: {
+      keep: "No change: current speed already gives good spacing.",
+      "250": "Normal speed: no aircraft_ahead, or it is more than 8 miles away.",
+      "210": "Slow down: aircraft_ahead is 5 to 8 miles away.",
+      "180": "Slow down more: aircraft_ahead is 3 to 5 miles away, or this aircraft is within 10 miles of the runway.",
+      "160": "Minimum speed: aircraft_ahead is closer than 3 miles.",
+    } };
+    if (onFinalCourse(p) && p.alt <= 3000 && !p.cleared)
+      questions[`${p.cs}|land`] = { type: "noul", instructions: { aircraft: p.cs, question: "Should `aircraft` be cleared to land now?" } };
+  }
+  const answers = await ask(state, questions);
+  for (const p of active) {
+    if (!planes.includes(p)) continue; // landed or lost while Jev was thinking
+    const plan = answers[`${p.cs}|plan`], land = answers[`${p.cs}|land`], acks = [];
+    if (plan.confidence >= JEV_ATC_CONF && plan.choice === "avoid") {
+      const n = nearest(p);
+      if (n) {
+        p.mode = null; p.tHdg = Math.round(bearing(n, p)); // fly directly away from traffic
+        p.tAlt = Math.max(2000, Math.min(10000, Math.round(n.alt / 1000) * 1000 + (n.alt > p.alt ? -1000 : 1000)));
+        acks.push(`traffic alert, turn heading ${String(p.tHdg || 360).padStart(3, "0")}, ${p.tAlt} ft`);
+      }
+    } else if (plan.confidence >= JEV_ATC_CONF && plan.choice !== p.mode && !(p.mode === "approach" && p.leg === "final")) { // never pull a plane off final
+      p.mode = plan.choice; p.leg = null;
+      const clamp = (v) => Math.max(150, Math.min(650, v));
+      p.fix = { x: clamp(p.x), y: clamp(p.y) };
+      if (p.fix.x > RWY.x - 100 && Math.abs(p.fix.y - RWY.y) < 150) p.fix.y = RWY.y + (Math.sign(p.y - RWY.y) || 1) * 150; // keep holds off the final course
+      acks.push(plan.choice === "approach" ? "cleared for the approach runway 27" : "hold present position");
+    }
+    const speed = answers[`${p.cs}|speed`];
+    const newSpd = Math.min(+speed.choice, speedLimit(p));
+    if (speed.confidence >= JEV_ATC_CONF && speed.choice !== "keep" && newSpd !== p.tSpd) {
+      p.tSpd = newSpd;
+      acks.push(p.tSpd < p.spd ? `reduce speed ${p.tSpd} knots` : `increase speed ${p.tSpd} knots`);
+    }
+    if (land && land.noul > 0.5) { p.cleared = true; acks.push("cleared to land runway 27"); }
+    if (acks.length) log(`JEV → ${p.cs}: ${acks.join(", ")}.`);
+  }
+}
+
+document.getElementById("jev").addEventListener("click", (e) => {
+  jevAtc = !jevAtc; jevTimer = 0;
+  if (!jevAtc) planes.forEach(p => p.mode = null);
+  e.target.textContent = `Jev ATC: ${jevAtc ? "ON" : "OFF"}`;
+  log(jevAtc ? "Jev has the frequency." : "You have the frequency.");
+});
+
+document.getElementById("cmd").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || !e.target.value.trim()) return;
+  log(`> ${e.target.value}`);
+  radio(e.target.value).catch(err => log(`[radio failed] ${err}`));
+  e.target.value = "";
+});
+</script>
+</body>
+</html>

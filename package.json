@@ -1,0 +1,10 @@
+{
+  "name": "jev-approach-control",
+  "version": "1.0.0",
+  "description": "A small air traffic control sim where Jev (TypeSafe's decision model) parses your radio calls or runs the approach itself. Unofficial demo.",
+  "license": "MIT",
+  "author": "Zeb88 (https://github.com/Zeb88)",
+  "private": true,
+  "engines": { "node": ">=18" },
+  "scripts": { "start": "node server.js" }
+}

@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How It Works · Jev Approach Control</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #000; color: #3f3; font: 14px/1.55 monospace; padding: 16px; }
+  main { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 22px; letter-spacing: 1px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 32px 0 8px; border-bottom: 1px solid #063; padding-bottom: 4px; }
+  p, li { color: #9c9; }
+  a { color: #6cf; }
+  code { color: #3f3; }
+  pre { background: #010; border: 1px solid #063; padding: 12px; overflow-x: auto; color: #9c9; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #063; vertical-align: top; }
+  th { color: #3f3; font-weight: normal; border-bottom-color: #3f3; }
+  td { color: #9c9; }
+  td:first-child { color: #3f3; white-space: nowrap; }
+</style>
+</head>
+<body>
+<main>
+<p><a href="/">← Back to the radar</a></p>
+<h1>HOW IT WORKS</h1>
+<p>Jev Approach Control is a single-runway approach sim. It uses <a href="https://docs.typesafe.ai/">TypeSafe's</a> Jev model in two ways: to turn your plain-English radio calls into typed commands, and, in <em>Jev ATC</em> mode, to make the controller's decisions itself. Code does the flying and the geometry. Jev only chooses from small, fixed sets of options, and every answer it gives has to meet a confidence threshold before anything happens.</p>
+
+<h2>Architecture</h2>
+<pre>browser (index.html)                 server.js (Node, no dependencies)      TypeSafe
+ radar loop, flight model   POST      holds TYPESAFE_API_KEY from .env      POST /v1/systemone
+ builds state + questions  ───────▶   adds model "jev-latest"   ─────────▶  model: jev-latest
+ applies typed answers     ◀───────   passes the response back  ◀─────────  answers + confidence
+                           /api/jev</pre>
+<p>The API key never reaches the browser. <code>server.js</code> also serves this page at <code>/info</code> and the game at <code>/</code>. On Vercel, the pages are static files and <code>/api/jev</code> runs as a serverless function (<code>api/jev.js</code>). Both use the same proxy code in <code>api/_jev.js</code>.</p>
+
+<h2>World and time</h2>
+<div class="scroll"><table>
+<tr><th>Parameter</th><th>Value</th><th>Notes</th></tr>
+<tr><td>Radar size</td><td>40 × 40 mi (800 px)</td><td>20 px = 1 mile; range rings every 5 mi</td></tr>
+<tr><td>Time scale</td><td>~13× real time</td><td>250 kt moves 18 px/s ≈ 0.9 mi/s, so an approach that takes ~20 min in real life takes about 90 s here</td></tr>
+<tr><td>Runway</td><td>27, threshold at the centre</td><td>Planes land westbound (heading 270). Drawn 4 mi long so it's visible; the dotted line is the 11 mi extended centerline</td></tr>
+<tr><td>Arrivals</td><td>one every 18 s</td><td>Spawn on the radar edge at a random bearing, heading for the centre, 5,000–10,000 ft, 250 kt</td></tr>
+<tr><td>Lost aircraft</td><td>leaves the radar</td><td>Counted as Lost</td></tr>
+</table></div>
+
+<h2>Flight model</h2>
+<div class="scroll"><table>
+<tr><th>Parameter</th><th>Value</th><th>Notes</th></tr>
+<tr><td>Turn rate</td><td>12°/s (game time)</td><td>Roughly a 3 mi turn radius at 250 kt; always takes the shorter direction</td></tr>
+<tr><td>Climb / descent</td><td>300 ft/s (game time)</td><td>≈ 1,400 ft/min in real-time terms</td></tr>
+<tr><td>Speed change</td><td>5 kt/s (game time)</td><td>Accelerates or decelerates toward the assigned speed</td></tr>
+<tr><td>Speed range</td><td>160–300 kt</td><td>Commands accept 10-kt steps</td></tr>
+<tr><td>Final approach speed</td><td>160 kt</td><td>Set automatically once the localizer is captured</td></tr>
+</table></div>
+
+<h2>Landing</h2>
+<p>A plane <strong>captures the localizer</strong> (the course that guides it down to the runway) when all of these are true at once:</p>
+<ul>
+  <li>it is cleared to land</li>
+  <li>altitude ≤ 3,000 ft</li>
+  <li>0–11 mi east of the threshold and within 1.25 mi of the centerline</li>
+  <li>heading within 40° of 270</li>
+</ul>
+<p>After capture it steers to the threshold, descends to 0 ft, slows to 160 kt, and <strong>lands</strong> when it is within 0.3 mi of the threshold.</p>
+
+<h2>Separation</h2>
+<div class="scroll"><table>
+<tr><th>Event</th><th>Threshold</th><th>Effect</th></tr>
+<tr><td>Conflict</td><td>&lt; 2 mi and &lt; 1,000 ft apart</td><td>Both planes turn red</td></tr>
+<tr><td>Collision</td><td>&lt; 0.4 mi and &lt; 300 ft apart</td><td>Game over</td></tr>
+</table></div>
+
+<h2>Radio commands (you as controller)</h2>
+<p>Each call you type is sent once to Jev with the list of planes on frequency (callsign, spoken name such as "Speedbird 406", heading, altitude, speed). One request asks five questions:</p>
+<div class="scroll"><table>
+<tr><th>Question</th><th>Type</th><th>Options</th></tr>
+<tr><td>callsign</td><td>Choice</td><td>every aircraft on frequency, or <code>none</code></td></tr>
+<tr><td>heading</td><td>Choice</td><td>010–360 in 10° steps, or <code>none</code></td></tr>
+<tr><td>altitude</td><td>Choice</td><td>1,000–10,000 ft in 1,000 ft steps, or <code>none</code></td></tr>
+<tr><td>speed</td><td>Choice</td><td>160–300 kt in 10 kt steps, or <code>none</code>. Relative calls ("reduce by 30") are worked out from the plane's current speed</td></tr>
+<tr><td>land</td><td>Noul (yes/no)</td><td>probability that the call clears the plane to land</td></tr>
+</table></div>
+<p><strong>Gating:</strong> if the callsign answer's confidence is below 0.5, the reply is "say again". A heading, altitude or speed answer is applied only if its confidence is ≥ 0.5, and landing clearance only if the Noul is &gt; 0.5. A manual heading takes the plane out of any Jev plan.</p>
+<pre>Examples
+  United 701 turn heading 180, descend 4000
+  Speedbird 406 reduce speed by 30
+  Delta 986 cleared to land runway 27</pre>
+
+<h2>Jev ATC mode</h2>
+<p>Every 4 s, all aircraft not yet on the localizer go to Jev in <strong>one batched request</strong> (the "speculative fan-out" pattern from TypeSafe's docs). The state includes the runway procedure, the separation rules, and for each aircraft: its current plan, altitude, speed, distance to the runway, whether it is established on final, whether it is cleared, how many approaching aircraft are ahead of it, the aircraft directly ahead (distance and speed), and the nearest traffic (distance and altitude difference).</p>
+<div class="scroll"><table>
+<tr><th>Question (per aircraft)</th><th>Type</th><th>Options → what code does</th></tr>
+<tr><td>plan</td><td>Choice</td><td>
+  <code>approach</code> → code flies it to a turn point 15 mi east of the runway and 5 mi off the centerline, then steers it onto the centerline (aiming 6 mi ahead), descending to 3,000 ft<br>
+  <code>hold</code> → circles a holding point kept inside the radar and away from the final approach path<br>
+  <code>avoid</code> → turns directly away from the nearest traffic and moves 1,000 ft away from its altitude</td></tr>
+<tr><td>speed</td><td>Choice</td><td><code>250</code> no traffic ahead within 8 mi · <code>210</code> 5–8 mi · <code>180</code> 3–5 mi or within 10 mi of the runway · <code>160</code> &lt; 3 mi · <code>keep</code></td></tr>
+<tr><td>land</td><td>Noul</td><td>asked only when the plane is established on final, at or below 3,000 ft and not yet cleared</td></tr>
+</table></div>
+<p><strong>Gating and guard rails:</strong></p>
+<ul>
+  <li>A plan or speed answer is applied only if its confidence is ≥ 0.35 (<code>JEV_ATC_CONF</code>). Jev chooses from few options, so this threshold is lower than for radio calls.</li>
+  <li>A plane that has turned onto final is never switched back to holding.</li>
+  <li>Speed limits cap whatever Jev picks: 180 kt within 16 mi on approach, 210 kt while holding.</li>
+  <li>Jev's instructions are logged only when something changes, e.g. <code>JEV → UAL701: hold present position, reduce speed 160 knots.</code></li>
+</ul>
+<p>Why the split? When Jev was asked to pick a raw heading out of 37 options, its confidence was only 0.2–0.3. With a handful of options that describe what to do, its answers are confident enough to act on, and code keeps the geometry exact.</p>
+
+<h2>Usage limit</h2>
+<p>Each browser gets <strong>5 minutes of Jev time</strong>, starting at its first Jev call, and a fresh allowance after 24 hours. The server enforces this with a signed, HttpOnly cookie. Once time is up, <code>/api/jev</code> answers <code>429</code> without calling TypeSafe, and the page switches off Jev ATC and the radio input. The radar keeps running. Requests over 64 KB are rejected. <code>SESSION_MINUTES</code> changes the allowance.</p>
+<p>So that clearing cookies doesn't reset the allowance, there's also a <strong>per-IP rate limit</strong>: 30 requests a minute (Jev ATC makes about 15) and 300 a day, which resets at 00:00 UTC. Counters are kept in Upstash Redis when it's configured, otherwise in memory. If the limiter can't be reached, requests are refused.</p>
+
+<h2>Radar display</h2>
+<div class="scroll"><table>
+<tr><th>Element</th><th>Meaning</th></tr>
+<tr><td>Label line 1</td><td>callsign</td></tr>
+<tr><td>Label line 2</td><td>altitude in hundreds of feet, heading (e.g. <code>030 270</code> = 3,000 ft, heading 270)</td></tr>
+<tr><td>Label line 3</td><td>speed in knots, plus <code>APP</code> (on approach) or <code>HLD</code> (holding)</td></tr>
+<tr><td>Colours</td><td>green normal · blue cleared to land · red in conflict</td></tr>
+<tr><td>Line from the dot</td><td>current heading · dots behind show the track, one every 2 s</td></tr>
+</table></div>
+
+<h2>Running it</h2>
+<pre>TYPESAFE_API_KEY=...   # in .env, or exported in your shell
+node server.js         # Node 18+; PORT defaults to 3000</pre>
+<p>Tunable constants at the top of the <code>&lt;script&gt;</code> in <code>index.html</code>: <code>TURN_RATE</code>, <code>MI</code>, <code>RWY</code>, and <code>JEV_ATC_CONF</code> further down.</p>
+
+<p><a href="/">← Back to the radar</a></p>
+<p>Created by <a href="https://github.com/Zeb88" target="_blank" rel="noopener">Zeb88</a>. MIT licensed.</p>
+<p>Unofficial demo, not affiliated with or endorsed by TypeSafe AI. Jev is TypeSafe's model, used here through its public API.</p>
+</main>
+</body>
+</html>
