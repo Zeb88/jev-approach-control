@@ -1,4 +1,6 @@
-# Never upload secrets or the local-only server
+# Never upload secrets. server.js and package.json are for local runs only;
+# on Vercel the site is static pages + the api/ function (no server entrypoint).
 .env
 .env.*
 server.js
+package.json
