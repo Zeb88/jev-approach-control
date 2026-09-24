@@ -149,7 +149,7 @@
 <p>Why the split? When Jev was asked to pick a raw heading out of 37 options, its confidence was only 0.2–0.3. With a handful of options that describe what to do, its answers are confident enough to act on, and code keeps the geometry exact.</p>
 
 <h2>Usage limit</h2>
-<p>Each browser gets <strong>5 minutes of Jev time</strong>, starting at its first Jev call, and a fresh allowance after 24 hours. The server enforces this with a signed, HttpOnly cookie. Once time is up, <code>/api/jev</code> answers <code>429</code> without calling TypeSafe, and the page switches off Jev ATC and the radio input. The radar keeps running. Requests over 64 KB are rejected. <code>SESSION_MINUTES</code> changes the allowance.</p>
+<p>Each browser gets <strong>10 minutes of Jev time</strong>, starting at its first Jev call, and a fresh allowance after 24 hours. The server enforces this with a signed, HttpOnly cookie. Once time is up, <code>/api/jev</code> answers <code>429</code> without calling TypeSafe, and the page switches off Jev ATC and the radio input. The radar keeps running. Requests over 64 KB are rejected. <code>SESSION_MINUTES</code> changes the allowance.</p>
 <p>So that clearing cookies doesn't reset the allowance, there's also a <strong>per-IP rate limit</strong>: 30 requests a minute (Jev ATC makes about 15) and 300 a day, which resets at 00:00 UTC. Counters are kept in Upstash Redis when it's configured, otherwise in memory. If the limiter can't be reached, requests are refused.</p>
 
 <h2>Radar display</h2>

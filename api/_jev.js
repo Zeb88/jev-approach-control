@@ -2,11 +2,11 @@
 // Files starting with "_" in api/ are not exposed as Vercel functions.
 const crypto = require("crypto");
 
-const SESSION_MS = (+process.env.SESSION_MINUTES || 5) * 60_000; // Jev time per browser
+const SESSION_MS = (+process.env.SESSION_MINUTES || 10) * 60_000; // Jev time per browser
 const COOLDOWN_S = 24 * 3600;  // cookie lifetime: one session per browser per day
 const MAX_BODY = 64_000;       // bytes; a busy Jev ATC batch is ~10 KB
 const IP_PER_MINUTE = +process.env.IP_MINUTE_LIMIT || 30;  // Jev ATC alone makes ~15/min
-const IP_PER_DAY = +process.env.IP_DAILY_LIMIT || 300;     // ~4 full sessions, room for shared IPs
+const IP_PER_DAY = +process.env.IP_DAILY_LIMIT || 300;     // ~2 full 10-minute sessions per IP
 
 // Stateless session: the cookie holds its start time plus an HMAC, so it can't be forged or extended.
 // Clearing cookies gets a fresh session, which is what the per-IP limit below is for.

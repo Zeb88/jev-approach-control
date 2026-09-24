@@ -6,18 +6,20 @@
 <title>Jev Approach Control</title>
 <style>
   * { box-sizing: border-box; }
-  body { margin: 0; background: #000; color: #3f3; font: 14px monospace; display: flex; flex-wrap: wrap; gap: 16px; padding: 16px; }
-  header { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; border-bottom: 1px solid #063; padding-bottom: 8px; }
+  body { margin: 0; background: #000; color: #3f3; font: 14px monospace; padding: 16px; }
+  header { margin-bottom: 16px; display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; border-bottom: 1px solid #063; padding-bottom: 8px; }
   h1 { margin: 0; font-size: 22px; letter-spacing: 1px; }
   header p { margin: 4px 0 0; color: #9c9; max-width: 80ch; line-height: 1.4; }
   a { color: #6cf; }
-  canvas { background: #020; border: 1px solid #3f3; width: min(800px, 100%, calc(100vh - 130px)); aspect-ratio: 1; min-width: 280px; }
-  #side { flex: 1 1 300px; max-width: 480px; display: flex; flex-direction: column; gap: 8px; }
+  header, main { max-width: var(--content, none); margin-left: auto; margin-right: auto; } /* --content set by fitRadar() */
+  main { display: flex; gap: 16px; align-items: stretch; }
+  canvas { display: block; flex: none; background: #020; border: 1px solid #3f3; } /* sized by fitRadar() */
+  #side { flex: 1; min-width: 320px; max-width: 640px; display: flex; flex-direction: column; gap: 8px; }
   input, button { background: #010; color: #3f3; border: 1px solid #3f3; font: inherit; font-size: 16px; padding: 8px; }
   button { cursor: pointer; }
-  #log { flex: 1 1 0; min-height: 35vh; overflow-y: auto; white-space: pre-wrap; border: 1px solid #3f3; padding: 8px; }
+  #log { flex: 1 1 0; min-height: 0; overflow-y: auto; white-space: pre-wrap; border: 1px solid #3f3; padding: 8px; }
   #log .atc { color: #7df0d0; } /* controller calls (you or Jev), vs green aircraft readbacks */
-  @media (max-width: 700px) { body { padding: 8px; gap: 8px; } #side { max-width: none; } }
+  @media (max-width: 819px) { body { padding: 8px; } header { margin-bottom: 8px; } main { flex-direction: column; gap: 8px; } #side { min-width: 0; max-width: none; } #log { flex: none; height: 40vh; } }
 </style>
 </head>
 <body>
@@ -28,6 +30,7 @@
   </div>
   <nav><a href="/info" target="_blank" rel="noopener">How it works ↗</a> · <a href="https://github.com/Zeb88/jev-approach-control" target="_blank" rel="noopener">Source on GitHub</a> · by <a href="https://github.com/Zeb88" target="_blank" rel="noopener">Zeb88</a> · unofficial demo, not affiliated with TypeSafe AI</nav>
 </header>
+<main>
 <canvas id="radar" width="800" height="800"></canvas>
 <div id="side">
   <div id="score">Landed: 0 · Lost: 0</div>
@@ -37,9 +40,23 @@
 Keep 1000 ft or 2 miles apart. Or hand the frequency to Jev.
 </div>
 </div>
+</main>
 <script>
 const cv = document.getElementById("radar"), ctx = cv.getContext("2d");
 const logEl = document.getElementById("log"), scoreEl = document.getElementById("score");
+// Largest square that fits: full window height on desktop (next to a ≥320 px side panel), full width on phones.
+function fitRadar() {
+  const narrow = innerWidth < 820, pad = narrow ? 8 : 16;
+  const top = document.querySelector("header").getBoundingClientRect().bottom + (narrow ? 8 : 16);
+  const size = Math.max(280, Math.floor(narrow ? innerWidth - 2 * pad : Math.min(innerHeight - top - pad, innerWidth - 2 * pad - 16 - 320)));
+  cv.style.width = cv.style.height = size + "px";
+  // Centre radar + side panel (side capped at 640 px) so very wide screens stay balanced; phones use the full width.
+  document.body.style.setProperty("--content", narrow ? "none" : size + 16 + Math.min(640, innerWidth - 2 * pad - 16 - size) + "px");
+  cv.width = cv.height = Math.round(size * (devicePixelRatio || 1)); // backing store at device resolution
+  ctx.setTransform(cv.width / 800, 0, 0, cv.width / 800, 0, 0);    // draw in 800x800 world units
+}
+addEventListener("resize", fitRadar);
+fitRadar();
 const RWY = { x: 300, y: 400, len: 80 }; // threshold; runway 27 extends west, final approach comes in from the east
 const AIRLINES = { AAL: "American", UAL: "United", DAL: "Delta", SWA: "Southwest", BAW: "Speedbird" };
 const MI = 20; // px per mile
@@ -256,7 +273,8 @@ function step(dt) {
 
 function draw() {
   ctx.clearRect(0, 0, 800, 800);
-  ctx.font = `${Math.min(22, Math.round(11 * 800 / cv.clientWidth))}px monospace`; // stay legible when the canvas is scaled down
+  const px = Math.max(11, Math.min(15, cv.clientWidth / 70)); // on-screen label size: grows a little on big radars
+  ctx.font = `${Math.min(24, px * 800 / cv.clientWidth)}px monospace`;
   const lh = parseInt(ctx.font);
   ctx.strokeStyle = "#063"; for (let r = 100; r < 600; r += 100) { ctx.beginPath(); ctx.arc(400, 400, r, 0, 7); ctx.stroke(); }
   ctx.strokeStyle = "#fff"; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(RWY.x, RWY.y); ctx.lineTo(RWY.x - RWY.len, RWY.y); ctx.stroke();
