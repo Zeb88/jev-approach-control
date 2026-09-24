@@ -2,8 +2,8 @@
 
 A small air traffic control sim for a single runway (27). Give radio calls in plain English, or hand the frequency to **Jev**, [TypeSafe's](https://docs.typesafe.ai/) decision model, and watch it sequence, space and land the traffic.
 
-- **You as controller:** type calls like `United 701 turn heading 180, descend 4000, reduce speed 210`. Jev turns the text into typed commands (callsign, heading, altitude, speed, landing clearance).
-- **Jev as controller:** click **Jev ATC**. Every 4 s Jev decides, for each aircraft, whether it flies the approach, holds or avoids traffic, what speed it should fly for spacing, and when to clear it to land. Code flies the geometry.
+- **You as controller:** type calls like `United 701 turn left heading 180, descend and maintain 4000, reduce speed 210` or `turn 20 degrees right`. Jev turns the text into typed commands: callsign, heading, turn direction, relative turn, altitude, speed, and approach and landing clearances. You vector arrivals onto a 30° intercept, clear them for the ILS, then clear them to land. Without a landing clearance they go around.
+- **Jev as controller:** click **Jev ATC**. Arrivals are vectored into a real traffic pattern: downwind, then base, then a 30° intercept onto the localizer and a 3° glideslope. Every 4 s Jev makes the sequencing decisions: who starts the approach and who holds (stacked at fixes ALPHA/BRAVO), extend the downwind or turn base (its spacing tool, targeting 5 mi in trail), traffic avoidance, speed, and landing clearance. Routine calls such as joining the downwind, the intercept vector and the approach clearance are made by code, and appear as `ATC →` in the log; Jev's decisions appear as `JEV →`.
 
 The full list of parameters (flight model, landing window, separation, Jev questions, confidence thresholds) is on the in-game **How it works** page (`/info`, source in [info.html](info.html)).
 

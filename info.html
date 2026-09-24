@@ -40,8 +40,8 @@
 <div class="scroll"><table>
 <tr><th>Parameter</th><th>Value</th><th>Notes</th></tr>
 <tr><td>Radar size</td><td>40 × 40 mi (800 px)</td><td>20 px = 1 mile; range rings every 5 mi</td></tr>
-<tr><td>Time scale</td><td>~13× real time</td><td>250 kt moves 18 px/s ≈ 0.9 mi/s, so an approach that takes ~20 min in real life takes about 90 s here</td></tr>
-<tr><td>Runway</td><td>27, threshold at the centre</td><td>Planes land westbound (heading 270). Drawn 4 mi long so it's visible; the dotted line is the 11 mi extended centerline</td></tr>
+<tr><td>Time scale</td><td>~13× real time</td><td>250 kt moves 18 px/s ≈ 0.9 mi/s, so a ~15 min real approach takes about a minute here</td></tr>
+<tr><td>Runway</td><td>27, threshold 5 mi west of centre</td><td>Planes land westbound (heading 270). Drawn 4 mi long so it's visible; the grey dotted line is the 24 mi final approach course</td></tr>
 <tr><td>Arrivals</td><td>one every 18 s</td><td>Spawn on the radar edge at a random bearing, heading for the centre, 5,000–10,000 ft, 250 kt</td></tr>
 <tr><td>Lost aircraft</td><td>leaves the radar</td><td>Counted as Lost</td></tr>
 </table></div>
@@ -49,22 +49,25 @@
 <h2>Flight model</h2>
 <div class="scroll"><table>
 <tr><th>Parameter</th><th>Value</th><th>Notes</th></tr>
-<tr><td>Turn rate</td><td>12°/s (game time)</td><td>Roughly a 3 mi turn radius at 250 kt; always takes the shorter direction</td></tr>
+<tr><td>Turn rate</td><td>25°/s (game time)</td><td>About a 1.7 mi turn radius at 210 kt. Turns go the way the controller said ("turn left heading…"), otherwise the shorter way</td></tr>
 <tr><td>Climb / descent</td><td>300 ft/s (game time)</td><td>≈ 1,400 ft/min in real-time terms</td></tr>
 <tr><td>Speed change</td><td>5 kt/s (game time)</td><td>Accelerates or decelerates toward the assigned speed</td></tr>
 <tr><td>Speed range</td><td>160–300 kt</td><td>Commands accept 10-kt steps</td></tr>
-<tr><td>Final approach speed</td><td>160 kt</td><td>Set automatically once the localizer is captured</td></tr>
 </table></div>
 
-<h2>Landing</h2>
-<p>A plane <strong>captures the localizer</strong> (the course that guides it down to the runway) when all of these are true at once:</p>
-<ul>
-  <li>it is cleared to land</li>
-  <li>altitude ≤ 3,000 ft</li>
-  <li>0–11 mi east of the threshold and within 1.25 mi of the centerline</li>
-  <li>heading within 40° of 270</li>
-</ul>
-<p>After capture it steers to the threshold, descends to 0 ft, slows to 160 kt, and <strong>lands</strong> when it is within 0.3 mi of the threshold.</p>
+<h2>Arrival procedure</h2>
+<p>Arrivals are vectored into a standard traffic pattern, the way a radar approach controller does it (compare FAA JO 7110.65, chapter 5-9):</p>
+<div class="scroll"><table>
+<tr><th>Phase</th><th>Tag</th><th>What happens</th><th>Altitude · speed limit</th></tr>
+<tr><td>Vectors</td><td><code>VEC</code></td><td>Headings to join the downwind on the aircraft's side of the field</td><td>descend 4,000 · 250 kt</td></tr>
+<tr><td>Downwind</td><td><code>DW</code></td><td>Heading 090, 10 mi either side of the final course, flown eastbound. The north side is a <em>right</em> downwind (right turns), the south side a <em>left</em> downwind (left turns)</td><td>4,000 · 210 kt</td></tr>
+<tr><td>Base</td><td><code>BASE</code></td><td>Heading 180 (north) or 360 (south). The base turn is allowed 13–22 mi east of the threshold. It's the controller's main spacing tool, and it happens automatically at 22 mi if nobody calls it</td><td>descend 3,000 · 180 kt</td></tr>
+<tr><td>Intercept</td><td><code>FIN</code></td><td>30° intercept (heading 240 from the north, 300 from the south), started about 2.75 mi from the course so the aircraft rolls out just before it. Comes with "maintain 3,000 until established on the localizer, cleared ILS runway 27 approach"</td><td>3,000 · 170 kt</td></tr>
+<tr><td>Localizer</td><td><code>LOC</code></td><td>Tracks the course to the threshold and rides a 3° glideslope (≈ 318 ft per mile), joined from below at 3,000 ft</td><td>glideslope · 160 kt</td></tr>
+<tr><td>Holding</td><td><code>HLD</code></td><td>Orbits fix ALPHA or BRAVO west of the field, stacked from 5,000 ft in 1,000 ft steps</td><td>5,000+ · 210 kt</td></tr>
+</table></div>
+<p>A plane <strong>captures the localizer</strong> when it has an approach or landing clearance, is at or below 3,000 ft, 0–24 mi east of the threshold, within 1.25 mi of the course and heading within 40° of 270. It <strong>lands</strong> within 0.3 mi of the threshold. Without a landing clearance by 1.5 mi, it <strong>goes around</strong>: runway heading, climb to 3,000.</p>
+<p>In testing, 544 approach starts (edge arrivals, random positions and headings, both holding fixes) all landed. Each joined final 12.6 mi or more from the threshold, at a 30° intercept or less.</p>
 
 <h2>Separation</h2>
 <div class="scroll"><table>
@@ -74,38 +77,46 @@
 </table></div>
 
 <h2>Radio commands (you as controller)</h2>
-<p>Each call you type is sent once to Jev with the list of planes on frequency (callsign, spoken name such as "Speedbird 406", heading, altitude, speed). One request asks five questions:</p>
+<p>Each call you type is sent once to Jev with the list of planes on frequency (callsign, spoken name such as "Speedbird 406", heading, altitude, speed). One request asks eight questions:</p>
 <div class="scroll"><table>
 <tr><th>Question</th><th>Type</th><th>Options</th></tr>
 <tr><td>callsign</td><td>Choice</td><td>every aircraft on frequency, or <code>none</code></td></tr>
 <tr><td>heading</td><td>Choice</td><td>010–360 in 10° steps, or <code>none</code></td></tr>
+<tr><td>turn_direction</td><td>Choice</td><td><code>left</code>, <code>right</code>, or <code>none</code> (the shorter turn)</td></tr>
+<tr><td>relative_turn</td><td>Choice</td><td>10–90° for calls like "turn 20 degrees left", or <code>none</code></td></tr>
 <tr><td>altitude</td><td>Choice</td><td>1,000–10,000 ft in 1,000 ft steps, or <code>none</code></td></tr>
 <tr><td>speed</td><td>Choice</td><td>160–300 kt in 10 kt steps, or <code>none</code>. Relative calls ("reduce by 30") are worked out from the plane's current speed</td></tr>
-<tr><td>land</td><td>Noul (yes/no)</td><td>probability that the call clears the plane to land</td></tr>
+<tr><td>approach</td><td>Noul (yes/no)</td><td>is this an ILS approach clearance?</td></tr>
+<tr><td>land</td><td>Noul (yes/no)</td><td>is this a landing clearance?</td></tr>
 </table></div>
-<p><strong>Gating:</strong> if the callsign answer's confidence is below 0.5, the reply is "say again". A heading, altitude or speed answer is applied only if its confidence is ≥ 0.5, and landing clearance only if the Noul is &gt; 0.5. A manual heading takes the plane out of any Jev plan.</p>
+<p><strong>Gating:</strong> if the callsign answer's confidence is below 0.5, the reply is "say again". Choice answers are applied only at ≥ 0.5 confidence, and clearances only when the Noul is &gt; 0.5. A manual heading takes the plane out of any Jev plan.</p>
 <pre>Examples
-  United 701 turn heading 180, descend 4000
+  United 701 turn left heading 180, descend and maintain 4000
+  Delta 986 turn 20 degrees right
   Speedbird 406 reduce speed by 30
-  Delta 986 cleared to land runway 27</pre>
+  American 12 turn right heading 240, maintain 3000 until established, cleared ILS runway 27 approach
+  American 12 runway 27 cleared to land</pre>
 
 <h2>Jev ATC mode</h2>
-<p>Every 4 s, all aircraft not yet on the localizer go to Jev in <strong>one batched request</strong> (the "speculative fan-out" pattern from TypeSafe's docs). The state includes the runway procedure, the separation rules, and for each aircraft: its current plan, altitude, speed, distance to the runway, whether it is established on final, whether it is cleared, how many approaching aircraft are ahead of it, the aircraft directly ahead (distance and speed), and the nearest traffic (distance and altitude difference).</p>
+<p>Every 4 s, the whole traffic picture goes to Jev in <strong>one batched request</strong> (the "speculative fan-out" pattern from TypeSafe's docs). For each aircraft the state includes its phase, altitude, speed, distance to the runway, position in the approach sequence, the aircraft ahead with the <em>in-trail</em> spacing between them (measured along the pattern, not in a straight line), the spacing it would have if it turned base now, and the nearest traffic.</p>
+<p>Jev only gets the decisions that set the sequence, and it's only asked what makes sense for each aircraft's phase:</p>
 <div class="scroll"><table>
-<tr><th>Question (per aircraft)</th><th>Type</th><th>Options → what code does</th></tr>
-<tr><td>plan</td><td>Choice</td><td>
-  <code>approach</code> → code flies it to a turn point 15 mi east of the runway and 5 mi off the centerline, then steers it onto the centerline (aiming 6 mi ahead), descending to 3,000 ft<br>
-  <code>hold</code> → circles a holding point kept inside the radar and away from the final approach path<br>
-  <code>avoid</code> → turns directly away from the nearest traffic and moves 1,000 ft away from its altitude</td></tr>
-<tr><td>speed</td><td>Choice</td><td><code>250</code> no traffic ahead within 8 mi · <code>210</code> 5–8 mi · <code>180</code> 3–5 mi or within 10 mi of the runway · <code>160</code> &lt; 3 mi · <code>keep</code></td></tr>
-<tr><td>land</td><td>Noul</td><td>asked only when the plane is established on final, at or below 3,000 ft and not yet cleared</td></tr>
+<tr><th>Aircraft is…</th><th>Jev chooses between</th></tr>
+<tr><td>not yet sequenced, or holding</td><td><code>start_approach</code> (vectors to the downwind) · <code>hold</code> (at the nearest fix) · <code>avoid</code></td></tr>
+<tr><td>being vectored to the downwind</td><td><code>continue</code> · <code>avoid</code></td></tr>
+<tr><td>on the downwind, before the base window</td><td><code>continue</code> · <code>avoid</code></td></tr>
+<tr><td>on the downwind, in the base window</td><td><code>extend_downwind</code> (build spacing) · <code>turn_base</code> · <code>avoid</code></td></tr>
+<tr><td>any phase before the localizer</td><td>a speed: <code>250</code> (&gt; 10 mi in trail) · <code>210</code> (6–10) · <code>180</code> (4–6, or on base) · <code>160</code> (&lt; 4) · <code>keep</code></td></tr>
+<tr><td>on the localizer, not cleared</td><td>clear to land (Noul)</td></tr>
 </table></div>
+<p>The target is 5 mi in trail on final, with a 3 mi minimum. <code>avoid</code> turns the aircraft directly away from the nearest traffic and moves it 1,000 ft away from that traffic's altitude.</p>
+<p><strong>Who says what on frequency:</strong> <code>JEV →</code> lines are Jev's decisions. <code>ATC →</code> lines are routine calls made by code: vectors to the downwind (amended only if 30°+ off and at most every 6 s), joining the downwind, the final intercept with the approach clearance, the mandatory base turn at 22 mi, and go-arounds. Jev decides <em>when</em>, and code flies the geometry.</p>
 <p><strong>Gating and guard rails:</strong></p>
 <ul>
-  <li>A plan or speed answer is applied only if its confidence is ≥ 0.35 (<code>JEV_ATC_CONF</code>). Jev chooses from few options, so this threshold is lower than for radio calls.</li>
-  <li>A plane that has turned onto final is never switched back to holding.</li>
-  <li>Speed limits cap whatever Jev picks: 180 kt within 16 mi on approach, 210 kt while holding.</li>
-  <li>Jev's instructions are logged only when something changes, e.g. <code>JEV → UAL701: hold present position, reduce speed 160 knots.</code></li>
+  <li>Jev's answers are applied only at ≥ 0.35 confidence (<code>JEV_ATC_CONF</code>). Jev picks from 2–5 options, so this threshold is lower than for radio calls.</li>
+  <li>Flow limit: at most 3 aircraft in the approach sequence. Extra <code>start_approach</code> answers are ignored until a slot frees up.</li>
+  <li>Once an aircraft is being vectored for the approach, it isn't sent back to hold. Without this rule, Jev switched planes back and forth between holding and approach.</li>
+  <li>The phase speed limits above cap whatever speed Jev picks.</li>
 </ul>
 <p>Why the split? When Jev was asked to pick a raw heading out of 37 options, its confidence was only 0.2–0.3. With a handful of options that describe what to do, its answers are confident enough to act on, and code keeps the geometry exact.</p>
 
@@ -118,9 +129,12 @@
 <tr><th>Element</th><th>Meaning</th></tr>
 <tr><td>Label line 1</td><td>callsign</td></tr>
 <tr><td>Label line 2</td><td>altitude in hundreds of feet, heading (e.g. <code>030 270</code> = 3,000 ft, heading 270)</td></tr>
-<tr><td>Label line 3</td><td>speed in knots, plus <code>APP</code> (on approach) or <code>HLD</code> (holding)</td></tr>
+<tr><td>Label line 3</td><td>speed in knots, plus the phase: <code>VEC</code> <code>DW</code> <code>BASE</code> <code>FIN</code> <code>LOC</code> <code>HLD</code></td></tr>
 <tr><td>Colours</td><td>green normal · blue cleared to land · red in conflict</td></tr>
 <tr><td>Line from the dot</td><td>current heading · dots behind show the track, one every 2 s</td></tr>
+<tr><td>Dotted lines</td><td>grey: final approach course · dark green: the two downwinds</td></tr>
+<tr><td>Triangles</td><td>holding fixes ALPHA and BRAVO</td></tr>
+<tr><td>Log colours</td><td>teal: controller calls (<code>&gt;</code> you, <code>JEV →</code>, <code>ATC →</code>) · green: aircraft</td></tr>
 </table></div>
 
 <h2>Running it</h2>

@@ -31,19 +31,23 @@
 <canvas id="radar" width="800" height="800"></canvas>
 <div id="side">
   <div id="score">Landed: 0 · Lost: 0</div>
-  <input id="cmd" placeholder="e.g. United 42 heading 270, descend 3000, reduce 180 knots" autofocus>
+  <input id="cmd" placeholder="e.g. United 42 turn left heading 270, descend 3000, reduce 180" autofocus>
   <button id="jev">Jev ATC: OFF</button>
-  <div id="log">Runway 27 (land westbound). Get planes below 3000 ft, heading ~270, east of the runway, then clear them to land.
+  <div id="log">Runway 27 (land westbound). Vector arrivals onto the final approach course east of the runway at or below 3000 ft (30° intercept or less), clear them for the ILS approach, then clear them to land before 1.5 mi or they go around.
 Keep 1000 ft or 2 miles apart. Or hand the frequency to Jev.
 </div>
 </div>
 <script>
 const cv = document.getElementById("radar"), ctx = cv.getContext("2d");
 const logEl = document.getElementById("log"), scoreEl = document.getElementById("score");
-const RWY = { x: 440, y: 400, len: 80 }; // threshold; runway extends west
+const RWY = { x: 300, y: 400, len: 80 }; // threshold; runway 27 extends west, final approach comes in from the east
 const AIRLINES = { AAL: "American", UAL: "United", DAL: "Delta", SWA: "Southwest", BAW: "Speedbird" };
 const MI = 20; // px per mile
-const TURN_RATE = 12; // deg/s — ~3 mi turn radius at 250 kts
+const TURN_RATE = 25; // deg/s of game time (~13x real time): ~1.7 mi turn radius at 210 kts
+// Traffic pattern for runway 27, in px from the threshold. Downwinds run eastbound 10 mi either side of the
+// final approach course; base turns happen 13-22 mi out, so aircraft join final well outside the approach gate.
+const PAT = { dw: 200, baseMin: 260, baseMax: 440, finalTurn: 55, gs: 318 /* ft per mile: 3° glideslope */ };
+const FIXES = [{ name: "ALPHA", x: 110, y: 190 }, { name: "BRAVO", x: 110, y: 610 }]; // holding fixes west of the field
 let planes = [], landed = 0, lost = 0, over = false, spawnTimer = 0;
 let jevAtc = false, jevBusy = false, jevTimer = 0;
 let sessionEnd = null, sessionOver = false; // Jev time limit, enforced by the server; this only mirrors it
@@ -61,13 +65,17 @@ function endSession(msg) {
 const log = (m) => {
   const line = document.createElement("span");
   line.textContent = m + "\n";
-  if (m.startsWith("> ") || m.startsWith("JEV →")) line.className = "atc";
+  if (m.startsWith("> ") || /^(JEV|ATC) →/.test(m)) line.className = "atc";
   logEl.append(line); logEl.scrollTop = 1e9;
 };
 const norm = (h) => ((h % 360) + 360) % 360;
 const bearing = (from, to) => norm(Math.atan2(to.x - from.x, from.y - to.y) * 180 / Math.PI);
+const round10 = (h) => norm(Math.round(h / 10) * 10);
+const fmtH = (h) => String(Math.round(norm(h)) || 360).padStart(3, "0");
 const aligned = (p) => Math.abs(norm(p.hdg - 270 + 180) - 180) < 40;
-const onFinalCourse = (p) => { const dx = p.x - RWY.x; return dx > 0 && dx < 220 && Math.abs(p.y - RWY.y) < 25 && aligned(p); };
+const onFinalCourse = (p) => { const dx = p.x - RWY.x; return dx > 0 && dx < PAT.baseMax + 40 && Math.abs(p.y - RWY.y) < 25 && aligned(p); };
+const shorterTurn = (p, h) => norm(h - p.hdg) <= 180 ? "right" : "left";
+const patternSide = (p) => p.side < 0 ? "right" : "left"; // north downwind uses right turns, south uses left
 
 function spawn() {
   const codes = Object.keys(AIRLINES), code = codes[Math.random() * codes.length | 0];
@@ -77,25 +85,69 @@ function spawn() {
   const x = 400 + Math.cos(a) * 390, y = 400 + Math.sin(a) * 390;
   const hdg = bearing({ x, y }, { x: 400, y: 400 });
   const alt = 5000 + (Math.random() * 6 | 0) * 1000;
-  planes.push({ cs, name: `${AIRLINES[code]} ${cs.slice(3)}`, x, y, hdg, tHdg: hdg, alt, tAlt: alt, spd: 250, tSpd: 250, cleared: false, mode: null, trail: [] });
-  log(`${cs}: with you, ${alt} ft, heading ${Math.round(hdg)}, 250 knots.`);
+  planes.push({ cs, name: `${AIRLINES[code]} ${cs.slice(3)}`, x, y, hdg, tHdg: hdg, alt, tAlt: alt, spd: 250, tSpd: 250,
+    mode: null, leg: null, turnDir: null, loc: false, appClr: false, cleared: false, trail: [] });
+  log(`${cs}: with you, ${alt} ft, heading ${fmtH(hdg)}, 250 knots.`);
 }
 
-// Code flies the approach geometry; Jev only decides *who* flies it.
+// Issue a vector and read it out. `who` is JEV (Jev's decision) or ATC (routine calls the code makes).
+function vector(p, who, hdg, extra = "", dir = shorterTurn(p, hdg)) {
+  p.tHdg = norm(hdg); p.turnDir = dir; p.vecAge = 0;
+  log(`${who} → ${p.cs}: turn ${dir} heading ${fmtH(hdg)}${extra ? ", " + extra : ""}.`);
+}
+
+function startApproach(p, who) {
+  p.mode = "approach"; p.leg = "vectors"; p.side = p.y < RWY.y ? -1 : 1; p.extended = false;
+  p.join = { x: Math.max(RWY.x - 60, Math.min(RWY.x + 300, p.x - 80)), y: RWY.y + p.side * PAT.dw };
+  p.tAlt = 4000;
+  vector(p, who, round10(bearing(p, p.join)), `vectors ${patternSide(p)} downwind runway 27, descend and maintain 4000`);
+}
+function turnBase(p, who) {
+  p.leg = "base"; p.tAlt = 3000;
+  vector(p, who, p.side < 0 ? 180 : 360, "base leg, descend and maintain 3000", patternSide(p));
+}
+function startHold(p, who) {
+  const f = FIXES.reduce((a, b) => Math.hypot(p.x - a.x, p.y - a.y) <= Math.hypot(p.x - b.x, p.y - b.y) ? a : b);
+  const taken = planes.filter(o => o !== p && o.mode === "hold" && o.fix === f).map(o => o.tAlt);
+  let alt = 5000; while (taken.includes(alt)) alt += 1000; // stack holding aircraft 1000 ft apart
+  p.mode = "hold"; p.leg = null; p.fix = f; p.tAlt = alt;
+  vector(p, who, round10(bearing(p, f)), `hold at ${f.name}, maintain ${alt}`);
+}
+function avoid(p, n) {
+  p.mode = null; p.leg = null;
+  const alt = Math.max(2000, Math.min(10000, Math.round(n.alt / 1000) * 1000 + (n.alt > p.alt ? -1000 : 1000)));
+  p.tAlt = alt;
+  vector(p, "JEV", round10(bearing(n, p)), `traffic alert, ${alt > p.alt ? "climb" : "descend"} and maintain ${alt}`);
+}
+function goAround(p) {
+  Object.assign(p, { loc: false, appClr: false, cleared: false, mode: null, leg: null, turnDir: null, tHdg: 270, tAlt: 3000, tSpd: 210 });
+  log(`${p.cs}: going around.`);
+  log(`ATC → ${p.cs}: fly runway heading, climb and maintain 3000.`);
+}
+
+// Routine pattern flying. Jev decides when each aircraft starts the approach and when it turns base;
+// the code flies the legs and makes the standard calls (join downwind, final intercept + approach clearance).
 function flyApproach(p) {
   const dx = p.x - RWY.x, dy = p.y - RWY.y;
-  if (p.leg === "final" && dx < 0) p.leg = null; // passed the runway uncleared: go around
-  if (p.leg !== "final") {
-    const base = { x: RWY.x + 300, y: RWY.y + (Math.sign(dy) || 1) * 100 }; // turn point east of the runway
-    if (dx > 300 || Math.hypot(p.x - base.x, p.y - base.y) < 40) p.leg = "final";
-    else p.tHdg = bearing(p, base);
-  }
-  if (p.leg === "final") p.tHdg = bearing(p, { x: p.x - 120, y: RWY.y }); // pursue the extended centerline westbound
-  if (p.tAlt > 3000) p.tAlt = 3000;
+  if (p.leg === "vectors") {
+    const h = round10(bearing(p, p.join));
+    if (Math.hypot(p.x - p.join.x, p.y - p.join.y) < 60) { // wider than the turn radius, so it can't orbit the point
+      p.leg = "downwind";
+      vector(p, "ATC", 90, `join ${patternSide(p)} downwind runway 27`);
+    } else if (Math.abs(norm(h - p.tHdg + 180) - 180) >= 30 && p.vecAge > 6) vector(p, "ATC", h); // amend sparingly, like a real controller
+  } else if (p.leg === "downwind") {
+    if (dx >= PAT.baseMax) turnBase(p, "ATC"); // end of the downwind: the base turn can't wait any longer
+  } else if (p.leg === "base") {
+    if (Math.abs(dy) <= PAT.finalTurn) { // 30° intercept, timed so the aircraft rolls out just before the course
+      p.leg = "final"; p.appClr = true;
+      vector(p, "ATC", 270 + p.side * 30, "maintain 3000 until established on the localizer, cleared ILS runway 27 approach", patternSide(p));
+    }
+  } else if (p.leg === "final" && dx < 0) goAround(p); // missed the localizer entirely
   p.tSpd = Math.min(p.tSpd, speedLimit(p));
 }
-// Procedure speed limits: 180 kts inside ~16 mi on approach, 210 kts in the hold.
-const speedLimit = (p) => p.mode === "approach" && p.x - RWY.x < 320 ? 180 : p.mode === "hold" ? 210 : 300;
+// Procedure speed limits per phase.
+const speedLimit = (p) => p.loc ? 160 : p.mode === "hold" ? 210 : p.mode !== "approach" ? 300
+  : { vectors: 250, downwind: 210, base: 180, final: 170 }[p.leg];
 
 function step(dt) {
   if ((spawnTimer -= dt) <= 0) { spawn(); spawnTimer = 18; }
@@ -104,17 +156,29 @@ function step(dt) {
     jevControl().catch(e => log(`[Jev ATC failed] ${e}`)).finally(() => jevBusy = false);
   }
   for (const p of planes) {
-    const dx = p.x - RWY.x, dy = p.y - RWY.y;
-    if (p.cleared && p.alt <= 3000 && onFinalCourse(p) || p.tAlt === 0) { // localizer captured
-      p.tHdg = bearing(p, RWY); p.tAlt = 0; p.tSpd = 160; p.mode = null;
-      if (Math.hypot(dx, dy) < 6) { p.done = "landed"; landed++; log(`${p.cs} landed. Nice.`); }
+    const dx = p.x - RWY.x, dist = Math.hypot(dx, p.y - RWY.y);
+    p.vecAge = (p.vecAge || 0) + dt;
+    if (!p.loc && (p.cleared || p.appClr) && p.alt <= 3000 && onFinalCourse(p)) { // localizer capture
+      Object.assign(p, { loc: true, mode: null, leg: null, turnDir: null });
+      log(`${p.cs}: established on the localizer runway 27.`);
+    }
+    if (p.loc) {
+      p.tHdg = bearing(p, RWY); p.tSpd = 160;
+      p.tAlt = Math.min(p.tAlt, Math.max(0, dist / MI * PAT.gs)); // ride the glideslope down
+      if (dist < 6) { p.done = "landed"; landed++; log(`${p.cs} landed. Nice.`); }
+      else if (!p.cleared && dx < 30) goAround(p); // no landing clearance by 1.5 mi
     } else if (p.mode === "approach") flyApproach(p);
-    else if (p.mode === "hold") { // orbit a fix kept well inside the radar
+    else if (p.mode === "hold") { // orbit the fix
+      p.turnDir = null;
       p.tHdg = Math.hypot(p.x - p.fix.x, p.y - p.fix.y) > 50 ? bearing(p, p.fix) : norm(p.hdg + 30);
       p.tSpd = Math.min(p.tSpd, speedLimit(p));
     }
-    const diff = norm(p.tHdg - p.hdg + 180) - 180;
-    p.hdg = norm(p.hdg + Math.sign(diff) * Math.min(Math.abs(diff), TURN_RATE * dt));
+    // Turn the way the controller said, otherwise the shorter way.
+    let diff = norm(p.tHdg - p.hdg + 180) - 180;
+    if (p.turnDir === "right") diff = norm(p.tHdg - p.hdg);
+    if (p.turnDir === "left") diff = -norm(p.hdg - p.tHdg);
+    if (Math.abs(diff) <= TURN_RATE * dt) { p.hdg = norm(p.tHdg); p.turnDir = null; }
+    else p.hdg = norm(p.hdg + Math.sign(diff) * TURN_RATE * dt);
     p.alt += Math.sign(p.tAlt - p.alt) * Math.min(Math.abs(p.tAlt - p.alt), 300 * dt);
     p.spd += Math.sign(p.tSpd - p.spd) * Math.min(Math.abs(p.tSpd - p.spd), 5 * dt);
     const r = p.hdg * Math.PI / 180, spd = p.spd / 14; // 250 kts ≈ 18 px/s
@@ -140,7 +204,13 @@ function draw() {
   const lh = parseInt(ctx.font);
   ctx.strokeStyle = "#063"; for (let r = 100; r < 600; r += 100) { ctx.beginPath(); ctx.arc(400, 400, r, 0, 7); ctx.stroke(); }
   ctx.strokeStyle = "#fff"; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(RWY.x, RWY.y); ctx.lineTo(RWY.x - RWY.len, RWY.y); ctx.stroke();
-  ctx.strokeStyle = "#555"; ctx.lineWidth = 1; ctx.setLineDash([4, 6]); ctx.beginPath(); ctx.moveTo(RWY.x, RWY.y); ctx.lineTo(RWY.x + 220, RWY.y); ctx.stroke(); ctx.setLineDash([]);
+  ctx.lineWidth = 1; ctx.setLineDash([4, 6]);
+  ctx.strokeStyle = "#555"; ctx.beginPath(); ctx.moveTo(RWY.x, RWY.y); ctx.lineTo(RWY.x + PAT.baseMax + 40, RWY.y); ctx.stroke(); // final approach course
+  ctx.strokeStyle = "#042"; // downwinds
+  for (const s of [-1, 1]) { ctx.beginPath(); ctx.moveTo(RWY.x - 60, RWY.y + s * PAT.dw); ctx.lineTo(RWY.x + PAT.baseMax, RWY.y + s * PAT.dw); ctx.stroke(); }
+  ctx.setLineDash([]);
+  ctx.fillStyle = "#396";
+  for (const f of FIXES) { ctx.beginPath(); ctx.moveTo(f.x, f.y - 6); ctx.lineTo(f.x + 5, f.y + 4); ctx.lineTo(f.x - 5, f.y + 4); ctx.closePath(); ctx.fill(); ctx.fillText(f.name, f.x + 8, f.y + 4); }
   for (const p of planes) {
     ctx.fillStyle = p.conflict ? "#f33" : p.cleared ? "#6cf" : "#3f3";
     for (const [x, y] of p.trail) ctx.fillRect(x - 1, y - 1, 2, 2);
@@ -148,8 +218,9 @@ function draw() {
     const r = p.hdg * Math.PI / 180;
     ctx.strokeStyle = ctx.fillStyle; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + Math.sin(r) * 20, p.y - Math.cos(r) * 20); ctx.stroke();
     ctx.fillText(p.cs, p.x + 8, p.y - 8);
-    ctx.fillText(`${String(Math.round(p.alt / 100)).padStart(3, "0")} ${String(Math.round(p.hdg) || 360).padStart(3, "0")}`, p.x + 8, p.y - 8 + lh);
-    ctx.fillText(`${Math.round(p.spd)}kt ${{ approach: "APP", hold: "HLD" }[p.mode] || ""}`, p.x + 8, p.y - 8 + lh * 2);
+    ctx.fillText(`${String(Math.round(p.alt / 100)).padStart(3, "0")} ${fmtH(p.hdg)}`, p.x + 8, p.y - 8 + lh);
+    const tag = p.loc ? "LOC" : p.mode === "hold" ? "HLD" : p.mode === "approach" ? { vectors: "VEC", downwind: "DW", base: "BASE", final: "FIN" }[p.leg] : "";
+    ctx.fillText(`${Math.round(p.spd)}kt ${tag}`, p.x + 8, p.y - 8 + lh * 2);
     p.conflict = false;
   }
 }
@@ -166,6 +237,7 @@ let last = performance.now();
 const HEADINGS = Array.from({ length: 36 }, (_, i) => String((i + 1) * 10).padStart(3, "0"));
 const ALTS = Array.from({ length: 10 }, (_, i) => String((i + 1) * 1000));
 const SPEEDS = Array.from({ length: 15 }, (_, i) => String(160 + i * 10));
+const DEGREES = Array.from({ length: 9 }, (_, i) => String((i + 1) * 10));
 const choice = (instructions, values, none) => ({ type: "choice", instructions,
   criteria: Object.fromEntries([...values.map(v => [v, null]), ["none", none]]) });
 
@@ -188,13 +260,21 @@ async function ask(state, questions) {
   return out.answers;
 }
 
-// Confidence-gated: an unsure instruction is skipped rather than applied. Returns what changed.
+// Confidence-gated: an unsure instruction is skipped rather than applied. Returns the readback.
 function apply(p, a) {
   const ok = (x) => x && x.choice !== "none" && x.confidence >= 0.5;
   const acks = [];
-  if (ok(a.heading) && +a.heading.choice % 360 !== Math.round(p.tHdg)) { p.tHdg = +a.heading.choice % 360; p.mode = null; acks.push(`heading ${a.heading.choice}`); }
+  const dir = ok(a.turn_direction) ? a.turn_direction.choice : null;
+  let hdg = null;
+  if (dir && ok(a.relative_turn)) hdg = norm(p.hdg + (dir === "right" ? 1 : -1) * +a.relative_turn.choice); // "turn 20 degrees left"
+  else if (ok(a.heading)) hdg = +a.heading.choice % 360;
+  if (hdg !== null) {
+    Object.assign(p, { tHdg: hdg, turnDir: dir, mode: null, leg: null }); // manual vectors take the aircraft off any Jev plan
+    acks.push(`${dir ? dir + " " : ""}heading ${fmtH(hdg)}`);
+  }
   if (ok(a.altitude) && +a.altitude.choice !== p.tAlt) { p.tAlt = +a.altitude.choice; acks.push(`${a.altitude.choice} ft`); }
   if (ok(a.speed) && +a.speed.choice !== p.tSpd) { p.tSpd = +a.speed.choice; acks.push(`${a.speed.choice} knots`); }
+  if (a.approach && a.approach.noul > 0.5 && !p.appClr) { p.appClr = true; acks.push("cleared ILS runway 27 approach"); }
   if (a.land && a.land.noul > 0.5 && !p.cleared) { p.cleared = true; acks.push("cleared to land runway 27"); }
   return acks;
 }
@@ -207,9 +287,12 @@ async function radio(text) {
     {
       callsign: { type: "choice", instructions: "Which aircraft in `aircraft_on_frequency` is the controller addressing in `radio_transmission`?",
                   criteria: Object.fromEntries([...planes.map(p => [p.cs, `Spoken as "${p.name}"`]), ["none", "No listed aircraft is addressed"]]) },
-      heading: choice("What heading (degrees) is the aircraft instructed to fly?", HEADINGS, none),
+      heading: choice("What absolute heading (degrees) is the aircraft instructed to fly?", HEADINGS, none),
+      turn_direction: choice("Which way is the aircraft told to turn?", ["left", "right"], "No turn direction was given"),
+      relative_turn: choice("How many degrees is the aircraft told to turn, for a relative turn such as 'turn 20 degrees left'?", DEGREES, "Not a relative turn: an absolute heading or no turn was given"),
       altitude: choice("What altitude (feet) is the aircraft instructed to climb or descend to?", ALTS, none),
       speed: choice("What speed (knots) is the aircraft instructed to fly? For 'reduce/increase speed by N', add or subtract N from its current speed_kts.", SPEEDS, none),
+      approach: { type: "noul", instructions: "Is the aircraft cleared for the ILS approach (an approach clearance, not necessarily a landing clearance)?" },
       land: { type: "noul", instructions: "Is the aircraft cleared to land?" },
     });
   const p = planes.find(p => p.cs === a.callsign.choice);
@@ -218,79 +301,93 @@ async function radio(text) {
   log(acks.length ? `${p.cs}: ${acks.join(", ")}.` : `${p.cs}: say again?`);
 }
 
-// Jev as the controller: one batched call. Jev makes the sequencing/safety decisions
-// (who approaches, who holds, who must avoid traffic, who is cleared); code flies them.
+// Jev as the controller: one batched call every 4 s. Jev makes the sequencing decisions (who starts the
+// approach, extend downwind or turn base, hold, avoid, speed, landing clearance); the code flies the legs.
 const JEV_ATC_CONF = 0.35; // hand-tuned against jev-1.13; raise if Jev acts erratically, lower if it freezes
+const PLAN_OPTIONS = {
+  start_approach: "Start the approach: vector to the downwind now. Choose this when fewer than 3 aircraft are in the approach sequence.",
+  hold: "Go to (or stay at) a holding fix to wait, because 3 or more aircraft are already in the approach sequence.",
+  avoid: "Turn away and change altitude by 1000 ft, because nearest_traffic is closer than 3 miles and less than 1000 ft apart vertically.",
+  continue: "Continue as instructed.",
+  extend_downwind: "Extend the downwind (keep flying east) to build spacing, because in_trail_miles_if_turned_base_now is less than 5.",
+  turn_base: "Turn base now, because in_trail_miles_if_turned_base_now is 5 or more, or there is no aircraft_ahead.",
+};
 async function jevControl() {
-  const active = planes.filter(p => p.tAlt !== 0); // planes on the localizer need nothing
-  if (!active.length) return;
-  const r1 = (v) => Math.round(v * 10) / 10;
+  const inSeq = (o) => o.loc || o.mode === "approach";
+  const pathLeft = (o) => { // estimated track distance (px) to the threshold along the pattern
+    const dx = o.x - RWY.x, ady = Math.abs(o.y - RWY.y);
+    if (o.loc || o.leg === "final" || o.leg === "base") return dx + ady;
+    if (o.leg === "downwind") return Math.max(PAT.baseMin - dx, 0) + Math.max(dx, PAT.baseMin) + ady;
+    if (o.leg === "vectors") { const jx = o.join.x - RWY.x; return Math.hypot(o.x - o.join.x, o.y - o.join.y) + Math.max(PAT.baseMin - jx, 0) + Math.max(jx, PAT.baseMin) + PAT.dw; }
+    return Infinity;
+  };
+  const seq = planes.filter(inSeq).sort((a, b) => pathLeft(a) - pathLeft(b));
+  const aheadOf = (p) => seq.filter(o => o !== p && pathLeft(o) < pathLeft(p)).pop();
   const nearest = (p) => planes.filter(o => o !== p).sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y))[0];
-  const toRwy = (p) => Math.hypot(p.x - RWY.x, p.y - RWY.y);
-  const ahead = (p) => planes.filter(o => o !== p && (o.mode === "approach" || o.tAlt === 0) && toRwy(o) < toRwy(p))
-    .sort((a, b) => toRwy(b) - toRwy(a))[0]; // the approaching aircraft directly in front
+  const r1 = (v) => Math.round(v * 10) / 10;
+  const optionsFor = (p) => {
+    if (p.loc || p.leg === "base" || p.leg === "final") return null; // established on the approach: nothing to decide
+    if (p.mode !== "approach") return ["start_approach", "hold", "avoid"];
+    if (p.leg === "vectors") return ["continue", "avoid"]; // once sequenced, no bouncing back to the hold
+    return p.x - RWY.x >= PAT.baseMin ? ["extend_downwind", "turn_base", "avoid"] : ["continue", "avoid"];
+  };
+
   const state = {
-    role: "You are the approach controller for runway 27. Land every aircraft one at a time without conflicts.",
-    procedure: "Aircraft on plan 'approach' are flown automatically onto final. Put only a few aircraft on approach at once, the ones closest to the runway, and make the rest hold until the aircraft ahead is well established on final. An aircraft must be cleared to land once it is established on final.",
+    role: "You are the approach controller for runway 27. Sequence the arrivals and land them without conflicts.",
+    procedure: "Arrivals are vectored to a downwind 10 miles either side of the final approach course, flown eastbound. You choose when each aircraft turns base, which sets its spacing on final: 5 miles in trail is ideal and 3 is the minimum. Routine vectors, the final intercept turn and the approach clearance are issued automatically. Keep at most 3 aircraft in the approach sequence and hold the rest. Clear aircraft to land once they are on the localizer.",
     separation: "Aircraft must stay at least 2 miles or 1000 ft apart.",
-    aircraft: active.map(p => {
-      const n = nearest(p);
-      return { callsign: p.cs, plan: p.mode || "none", altitude_ft: Math.round(p.alt), speed_kts: Math.round(p.spd),
-        distance_to_runway_miles: r1(Math.hypot(p.x - RWY.x, p.y - RWY.y) / MI), established_on_final: onFinalCourse(p) && p.alt <= 3000,
-        cleared_to_land: p.cleared, aircraft_on_approach_closer_to_runway: planes.filter(o => o !== p && (o.mode === "approach" || o.tAlt === 0) && toRwy(o) < toRwy(p)).length,
-        aircraft_ahead: (a => a ? { callsign: a.cs, distance_miles: r1(Math.hypot(a.x - p.x, a.y - p.y) / MI), speed_kts: Math.round(a.spd) } : null)(ahead(p)),
+    aircraft_in_approach_sequence: seq.length,
+    aircraft: planes.map(p => {
+      const a = aheadOf(p) || (!inSeq(p) ? seq[seq.length - 1] : null), n = nearest(p);
+      const e = { callsign: p.cs, status: p.loc ? "on the localizer" : p.mode === "hold" ? `holding at ${p.fix.name}` : p.mode === "approach" ? `approach, ${p.leg} leg` : "not yet sequenced",
+        altitude_ft: Math.round(p.alt), speed_kts: Math.round(p.spd), distance_to_runway_miles: r1(Math.hypot(p.x - RWY.x, p.y - RWY.y) / MI),
+        cleared_to_land: p.cleared, position_in_sequence: seq.indexOf(p) + 1 || null,
+        aircraft_ahead: a ? { callsign: a.cs, in_trail_miles: inSeq(p) ? r1((pathLeft(p) - pathLeft(a)) / MI) : null } : null,
         nearest_traffic: n ? { callsign: n.cs, distance_miles: r1(Math.hypot(n.x - p.x, n.y - p.y) / MI), altitude_diff_ft: Math.round(n.alt - p.alt) } : null };
+      if (p.leg === "downwind" && p.x - RWY.x >= PAT.baseMin)
+        e.in_trail_miles_if_turned_base_now = a ? r1((p.x - RWY.x + Math.abs(p.y - RWY.y) - pathLeft(a)) / MI) : null;
+      return e;
     }),
   };
   const questions = {};
-  for (const p of active) {
-    questions[`${p.cs}|plan`] = { type: "choice", instructions: { aircraft: p.cs, question: "What should `aircraft` do now?" }, criteria: {
-      approach: "Fly the approach to land. For the aircraft closest to the runway, or when at most one aircraft on approach is ahead of it.",
-      hold: "Circle in place to wait, because two or more aircraft on approach are already ahead of it.",
-      avoid: "Turn away and change altitude by 1000 ft, because nearest_traffic is closer than 3 miles and less than 1000 ft apart vertically.",
-    } };
-    questions[`${p.cs}|speed`] = { type: "choice", instructions: { aircraft: p.cs, question: "What speed should `aircraft` be assigned to keep spacing behind `aircraft_ahead`?" }, criteria: {
+  for (const p of planes) {
+    const q = (question) => ({ aircraft: p.cs, question });
+    const opts = optionsFor(p);
+    if (opts) questions[`${p.cs}|plan`] = { type: "choice", instructions: q("What should `aircraft` do now?"),
+      criteria: Object.fromEntries(opts.map(o => [o, PLAN_OPTIONS[o]])) };
+    if (!p.loc) questions[`${p.cs}|speed`] = { type: "choice", instructions: q("What speed should `aircraft` be assigned to keep spacing behind its aircraft_ahead?"), criteria: {
       keep: "No change: current speed already gives good spacing.",
-      "250": "Normal speed: no aircraft_ahead, or it is more than 8 miles away.",
-      "210": "Slow down: aircraft_ahead is 5 to 8 miles away.",
-      "180": "Slow down more: aircraft_ahead is 3 to 5 miles away, or this aircraft is within 10 miles of the runway.",
-      "160": "Minimum speed: aircraft_ahead is closer than 3 miles.",
+      "250": "Normal speed: no aircraft_ahead, or it is more than 10 miles in trail.",
+      "210": "Slow down: aircraft_ahead is 6 to 10 miles in trail.",
+      "180": "Slow down more: aircraft_ahead is 4 to 6 miles in trail, or this aircraft is on base.",
+      "160": "Minimum speed: aircraft_ahead is less than 4 miles in trail.",
     } };
-    if (onFinalCourse(p) && p.alt <= 3000 && !p.cleared)
-      questions[`${p.cs}|land`] = { type: "noul", instructions: { aircraft: p.cs, question: "Should `aircraft` be cleared to land now?" } };
+    if (p.loc && !p.cleared) questions[`${p.cs}|land`] = { type: "noul", instructions: q("Should `aircraft` be cleared to land now?") };
   }
+  if (!Object.keys(questions).length) return;
   const answers = await ask(state, questions);
-  for (const p of active) {
+  for (const p of [...planes]) {
+    const plan = answers[`${p.cs}|plan`], speed = answers[`${p.cs}|speed`], land = answers[`${p.cs}|land`];
     if (!planes.includes(p)) continue; // landed or lost while Jev was thinking
-    const plan = answers[`${p.cs}|plan`], land = answers[`${p.cs}|land`], acks = [];
-    if (plan.confidence >= JEV_ATC_CONF && plan.choice === "avoid") {
-      const n = nearest(p);
-      if (n) {
-        p.mode = null; p.tHdg = Math.round(bearing(n, p)); // fly directly away from traffic
-        p.tAlt = Math.max(2000, Math.min(10000, Math.round(n.alt / 1000) * 1000 + (n.alt > p.alt ? -1000 : 1000)));
-        acks.push(`traffic alert, turn heading ${String(p.tHdg || 360).padStart(3, "0")}, ${p.tAlt} ft`);
-      }
-    } else if (plan.confidence >= JEV_ATC_CONF && plan.choice !== p.mode && !(p.mode === "approach" && p.leg === "final")) { // never pull a plane off final
-      p.mode = plan.choice; p.leg = null;
-      const clamp = (v) => Math.max(150, Math.min(650, v));
-      p.fix = { x: clamp(p.x), y: clamp(p.y) };
-      if (p.fix.x > RWY.x - 100 && Math.abs(p.fix.y - RWY.y) < 150) p.fix.y = RWY.y + (Math.sign(p.y - RWY.y) || 1) * 150; // keep holds off the final course
-      acks.push(plan.choice === "approach" ? "cleared for the approach runway 27" : "hold present position");
+    if (plan && plan.confidence >= JEV_ATC_CONF) { // guards re-check the leg: it may have changed while Jev was thinking
+      const c = plan.choice, n = nearest(p);
+      if (c === "start_approach" && p.mode !== "approach" && !p.loc && planes.filter(inSeq).length < 3) startApproach(p, "JEV"); // flow limit: 3 in sequence
+      else if (c === "hold" && p.mode !== "hold" && !p.loc && p.leg !== "base" && p.leg !== "final") startHold(p, "JEV");
+      else if (c === "avoid" && n && !p.loc && p.leg !== "base" && p.leg !== "final") avoid(p, n);
+      else if (c === "turn_base" && p.leg === "downwind" && p.x - RWY.x >= PAT.baseMin) turnBase(p, "JEV");
+      else if (c === "extend_downwind" && p.leg === "downwind" && !p.extended) { p.extended = true; log(`JEV → ${p.cs}: extend downwind, I'll call your base.`); }
     }
-    const speed = answers[`${p.cs}|speed`];
-    const newSpd = Math.min(+speed.choice, speedLimit(p));
-    if (speed.confidence >= JEV_ATC_CONF && speed.choice !== "keep" && newSpd !== p.tSpd) {
-      p.tSpd = newSpd;
-      acks.push(p.tSpd < p.spd ? `reduce speed ${p.tSpd} knots` : `increase speed ${p.tSpd} knots`);
+    if (speed && !p.loc && speed.confidence >= JEV_ATC_CONF && speed.choice !== "keep") {
+      const newSpd = Math.min(+speed.choice, speedLimit(p));
+      if (newSpd !== p.tSpd) { p.tSpd = newSpd; log(`JEV → ${p.cs}: ${newSpd < p.spd ? "reduce" : "increase"} speed ${newSpd} knots.`); }
     }
-    if (land && land.noul > 0.5) { p.cleared = true; acks.push("cleared to land runway 27"); }
-    if (acks.length) log(`JEV → ${p.cs}: ${acks.join(", ")}.`);
+    if (land && p.loc && !p.cleared && land.noul > 0.5) { p.cleared = true; log(`JEV → ${p.cs}: runway 27, cleared to land.`); }
   }
 }
 
 document.getElementById("jev").addEventListener("click", (e) => {
   jevAtc = !jevAtc; jevTimer = 0;
-  if (!jevAtc) planes.forEach(p => p.mode = null);
+  if (!jevAtc) planes.forEach(p => { if (p.mode) Object.assign(p, { mode: null, leg: null }); });
   e.target.textContent = `Jev ATC: ${jevAtc ? "ON" : "OFF"}`;
   log(jevAtc ? "Jev has the frequency." : "You have the frequency.");
 });
