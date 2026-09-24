@@ -42,7 +42,7 @@
 <tr><td>Radar size</td><td>40 × 40 mi (800 px)</td><td>20 px = 1 mile; range rings every 5 mi</td></tr>
 <tr><td>Time scale</td><td>~13× real time</td><td>250 kt moves 18 px/s ≈ 0.9 mi/s, so a ~15 min real approach takes about a minute here</td></tr>
 <tr><td>Runway</td><td>27, threshold 5 mi west of centre</td><td>Planes land westbound (heading 270). Drawn 4 mi long so it's visible; the grey dotted line is the 24 mi final approach course</td></tr>
-<tr><td>Arrivals</td><td>one every 18 s</td><td>Spawn on the radar edge at a random bearing, heading for the centre, 5,000–10,000 ft, 250 kt</td></tr>
+<tr><td>Arrivals</td><td>one every 18 s</td><td>Enter on one of four STARs (below) at 9,000–10,000 ft, 250 kt. Upstream flow control holds new arrivals back while 8 aircraft are on frequency</td></tr>
 <tr><td>Lost aircraft</td><td>leaves the radar</td><td>Counted as Lost</td></tr>
 </table></div>
 
@@ -55,19 +55,38 @@
 <tr><td>Speed range</td><td>160–300 kt</td><td>Commands accept 10-kt steps</td></tr>
 </table></div>
 
+<h2>STARs (standard arrival routes)</h2>
+<p>Every arrival enters on one of four made-up STARs and descends via its route, meeting each fix's altitude and speed. Arrivals from the west feed straight into their downwind. Arrivals from the east go round the outside of the pattern to the same merge fix, where the two streams on each side meet at different altitudes.</p>
+<div class="scroll"><table>
+<tr><th>STAR</th><th>From</th><th>Route (altitude, speed)</th></tr>
+<tr><td>KEEPR ONE</td><td>north-west</td><td>KEEPR 9,000 → <strong>ALPHA</strong> 6,000 → NIKKO 4,000 / 210 kt → right downwind</td></tr>
+<tr><td>MARLO ONE</td><td>north-east</td><td>MARLO 10,000 → DUNES 8,000 → <strong>ALPHA</strong> 7,000 → NIKKO 4,000 / 210 kt → right downwind</td></tr>
+<tr><td>PIKES ONE</td><td>south-west</td><td>PIKES 9,000 → <strong>BRAVO</strong> 6,000 → SOLAR 4,000 / 210 kt → left downwind</td></tr>
+<tr><td>ROWAN ONE</td><td>south-east</td><td>ROWAN 10,000 → CEDAR 8,000 → <strong>BRAVO</strong> 7,000 → SOLAR 4,000 / 210 kt → left downwind</td></tr>
+</table></div>
+<ul>
+  <li><strong>Clearance limit:</strong> in Jev ATC mode, ALPHA and BRAVO are each arrival's clearance limit. A plane continues past it only when cleared "via the arrival". Otherwise it enters the published hold there by itself, as a pilot would. In your own mode there's no clearance limit: planes fly the whole STAR, and after NIKKO or SOLAR they fly heading 090 (the downwind) and wait for your vectors.</li>
+  <li><strong>Holding stacks:</strong> a new aircraft joins the <em>top</em> of the stack, 1,000 ft above the highest, so it never descends through traffic. The stack steps down 1,000 ft at a time as levels below free up, and only the lowest aircraft can leave.</li>
+</ul>
+
 <h2>Arrival procedure</h2>
-<p>Arrivals are vectored into a standard traffic pattern, the way a radar approach controller does it (compare FAA JO 7110.65, chapter 5-9):</p>
+<p>From the end of a STAR, or when taken off it with vectors, aircraft fly a standard traffic pattern, the way a radar approach controller runs it (compare FAA JO 7110.65, chapter 5-9):</p>
 <div class="scroll"><table>
 <tr><th>Phase</th><th>Tag</th><th>What happens</th><th>Altitude · speed limit</th></tr>
-<tr><td>Vectors</td><td><code>VEC</code></td><td>Headings to join the downwind on the aircraft's side of the field</td><td>descend 4,000 · 250 kt</td></tr>
+<tr><td>Arrival</td><td><code>ARR</code></td><td>Flying a STAR (above)</td><td>per fix · 250 → 210 kt</td></tr>
+<tr><td>Vectors</td><td><code>VEC</code></td><td>Headings to join the downwind on the aircraft's side of the field, for aircraft off the STAR (after a go-around or a traffic avoidance turn, or when looping back for spacing)</td><td>descend 4,000 · 250 kt</td></tr>
 <tr><td>Downwind</td><td><code>DW</code></td><td>Heading 090, 10 mi either side of the final course, flown eastbound. The north side is a <em>right</em> downwind (right turns), the south side a <em>left</em> downwind (left turns)</td><td>4,000 · 210 kt</td></tr>
 <tr><td>Base</td><td><code>BASE</code></td><td>Heading 180 (north) or 360 (south). The base turn is allowed 13–22 mi east of the threshold. It's the controller's main spacing tool, and it happens automatically at 22 mi if nobody calls it</td><td>descend 3,000 · 180 kt</td></tr>
 <tr><td>Intercept</td><td><code>FIN</code></td><td>30° intercept (heading 240 from the north, 300 from the south), started about 2.75 mi from the course so the aircraft rolls out just before it. Comes with "maintain 3,000 until established on the localizer, cleared ILS runway 27 approach"</td><td>3,000 · 170 kt</td></tr>
 <tr><td>Localizer</td><td><code>LOC</code></td><td>Tracks the course to the threshold and rides a 3° glideslope (≈ 318 ft per mile), joined from below at 3,000 ft</td><td>glideslope · 160 kt</td></tr>
-<tr><td>Holding</td><td><code>HLD</code></td><td>Orbits fix ALPHA or BRAVO west of the field, stacked from 5,000 ft in 1,000 ft steps</td><td>5,000+ · 210 kt</td></tr>
+<tr><td>Holding</td><td><code>HLD</code></td><td>Orbits ALPHA or BRAVO in a stack from 5,000 ft (see STARs above)</td><td>5,000+ · 210 kt</td></tr>
 </table></div>
 <p>A plane <strong>captures the localizer</strong> when it has an approach or landing clearance, is at or below 3,000 ft, 0–24 mi east of the threshold, within 1.25 mi of the course and heading within 40° of 270. It <strong>lands</strong> within 0.3 mi of the threshold. Without a landing clearance by 1.5 mi, it <strong>goes around</strong>: runway heading, climb to 3,000.</p>
-<p>In testing, 544 approach starts (edge arrivals, random positions and headings, both holding fixes) all landed. Each joined final 12.6 mi or more from the threshold, at a 30° intercept or less.</p>
+<p><strong>Tested:</strong></p>
+<ul>
+  <li><strong>Single aircraft:</strong> 544 approach starts (edge arrivals, random positions and headings, both holding fixes) all landed. Each joined final 12.6 mi or more from the threshold, at a 30° intercept or less. Every STAR lands both when cleared straight through and when held at its clearance limit first.</li>
+  <li><strong>Busy traffic:</strong> six 30-minute runs with the same decision rules Jev is given each landed 62–64 aircraft, with none lost, no collisions and no go-arounds. At most 5 were holding, and the tightest spacing on final was 6.5 mi.</li>
+</ul>
 
 <h2>Separation</h2>
 <div class="scroll"><table>
@@ -77,7 +96,7 @@
 </table></div>
 
 <h2>Radio commands (you as controller)</h2>
-<p>Each call you type is sent once to Jev with the list of planes on frequency (callsign, spoken name such as "Speedbird 406", heading, altitude, speed). One request asks eight questions:</p>
+<p>Each call you type is sent once to Jev with the list of planes on frequency (callsign, spoken name such as "Speedbird 406", heading, altitude, speed). One request asks ten questions:</p>
 <div class="scroll"><table>
 <tr><th>Question</th><th>Type</th><th>Options</th></tr>
 <tr><td>callsign</td><td>Choice</td><td>every aircraft on frequency, or <code>none</code></td></tr>
@@ -88,6 +107,8 @@
 <tr><td>speed</td><td>Choice</td><td>160–300 kt in 10 kt steps, or <code>none</code>. Relative calls ("reduce by 30") are worked out from the plane's current speed</td></tr>
 <tr><td>approach</td><td>Noul (yes/no)</td><td>is this an ILS approach clearance?</td></tr>
 <tr><td>land</td><td>Noul (yes/no)</td><td>is this a landing clearance?</td></tr>
+<tr><td>hold</td><td>Noul (yes/no)</td><td>is the aircraft told to hold? It joins the top of the nearest stack</td></tr>
+<tr><td>resume</td><td>Noul (yes/no)</td><td>is it told to leave the hold and continue on the arrival?</td></tr>
 </table></div>
 <p><strong>Gating:</strong> if the callsign answer's confidence is below 0.5, the reply is "say again". Choice answers are applied only at ≥ 0.5 confidence, and clearances only when the Noul is &gt; 0.5. A manual heading takes the plane out of any Jev plan.</p>
 <pre>Examples
@@ -95,14 +116,20 @@
   Delta 986 turn 20 degrees right
   Speedbird 406 reduce speed by 30
   American 12 turn right heading 240, maintain 3000 until established, cleared ILS runway 27 approach
-  American 12 runway 27 cleared to land</pre>
+  American 12 runway 27 cleared to land
+  Southwest 757 hold at ALPHA
+  Southwest 757 leave the hold, continue on the arrival</pre>
 
 <h2>Jev ATC mode</h2>
-<p>Every 4 s, the whole traffic picture goes to Jev in <strong>one batched request</strong> (the "speculative fan-out" pattern from TypeSafe's docs). For each aircraft the state includes its phase, altitude, speed, distance to the runway, position in the approach sequence, the aircraft ahead with the <em>in-trail</em> spacing between them (measured along the pattern, not in a straight line), the spacing it would have if it turned base now, and the nearest traffic.</p>
+<p>Every 4 s, the whole traffic picture goes to Jev in <strong>one batched request</strong> (the "speculative fan-out" pattern from TypeSafe's docs). For each aircraft the state includes its phase (including which STAR it's on and whether it's cleared past its clearance limit), altitude, speed, distance to the runway, position in the approach sequence, the aircraft ahead with the <em>in-trail</em> spacing between them (measured along the route, not in a straight line), and the nearest traffic. Aircraft on the downwind also get the spacing on final they'd have if they turned base now, measured to every aircraft already on base, the intercept or the localizer, ahead or behind.</p>
 <p>Jev only gets the decisions that set the sequence, and it's only asked what makes sense for each aircraft's phase:</p>
 <div class="scroll"><table>
 <tr><th>Aircraft is…</th><th>Jev chooses between</th></tr>
-<tr><td>not yet sequenced, or holding</td><td><code>start_approach</code> (vectors to the downwind) · <code>hold</code> (at the nearest fix) · <code>avoid</code></td></tr>
+<tr><td>on a STAR, not yet cleared past its holding fix</td><td><code>cleared_via_arrival</code> · <code>not_yet</code> (it will hold at the clearance limit) · <code>avoid</code></td></tr>
+<tr><td>on a STAR, already cleared</td><td><code>continue</code> · <code>avoid</code></td></tr>
+<tr><td>holding, lowest in the stack</td><td><code>leave_hold</code> (continue on the arrival) · <code>hold</code> · <code>avoid</code></td></tr>
+<tr><td>holding, higher in the stack</td><td><code>hold</code> · <code>avoid</code></td></tr>
+<tr><td>off the arrivals (after avoid or a go-around)</td><td><code>start_approach</code> (vectors to the downwind) · <code>hold</code> (at the nearest fix) · <code>avoid</code></td></tr>
 <tr><td>being vectored to the downwind</td><td><code>continue</code> · <code>avoid</code></td></tr>
 <tr><td>on the downwind, before the base window</td><td><code>continue</code> · <code>avoid</code></td></tr>
 <tr><td>on the downwind, in the base window</td><td><code>extend_downwind</code> (build spacing) · <code>turn_base</code> · <code>avoid</code></td></tr>
@@ -110,11 +137,12 @@
 <tr><td>on the localizer, not cleared</td><td>clear to land (Noul)</td></tr>
 </table></div>
 <p>The target is 5 mi in trail on final, with a 3 mi minimum. <code>avoid</code> turns the aircraft directly away from the nearest traffic and moves it 1,000 ft away from that traffic's altitude.</p>
-<p><strong>Who says what on frequency:</strong> <code>JEV →</code> lines are Jev's decisions. <code>ATC →</code> lines are routine calls made by code: vectors to the downwind (amended only if 30°+ off and at most every 6 s), joining the downwind, the final intercept with the approach clearance, the mandatory base turn at 22 mi, and go-arounds. Jev decides <em>when</em>, and code flies the geometry.</p>
+<p><strong>Who says what on frequency:</strong> <code>JEV →</code> lines are Jev's decisions. <code>ATC →</code> lines are routine calls made by code: holding at a clearance limit "as published", stepping the stack down, vectors to the downwind (amended only if 30°+ off and at most every 6 s), joining the downwind, the final intercept with the approach clearance, the mandatory base turn at 22 mi (or a loop back round for spacing if that turn would be too tight), and go-arounds. Jev decides <em>when</em>, and code flies the geometry.</p>
 <p><strong>Gating and guard rails:</strong></p>
 <ul>
   <li>Jev's answers are applied only at ≥ 0.35 confidence (<code>JEV_ATC_CONF</code>). Jev picks from 2–5 options, so this threshold is lower than for radio calls.</li>
-  <li>Flow limit: at most 3 aircraft in the approach sequence. Extra <code>start_approach</code> answers are ignored until a slot frees up.</li>
+  <li>Flow limit: at most 3 aircraft in the approach sequence (past their clearance limit, in the pattern or on the localizer). Extra <code>cleared_via_arrival</code>, <code>leave_hold</code> and <code>start_approach</code> answers are ignored until a slot frees up.</li>
+  <li>Base turns under the legal minimum of 3 mi spacing on final are ignored. Jev aims for 5.</li>
   <li>Once an aircraft is being vectored for the approach, it isn't sent back to hold. Without this rule, Jev switched planes back and forth between holding and approach.</li>
   <li>The phase speed limits above cap whatever speed Jev picks.</li>
 </ul>
@@ -129,11 +157,11 @@
 <tr><th>Element</th><th>Meaning</th></tr>
 <tr><td>Label line 1</td><td>callsign</td></tr>
 <tr><td>Label line 2</td><td>altitude in hundreds of feet, heading (e.g. <code>030 270</code> = 3,000 ft, heading 270)</td></tr>
-<tr><td>Label line 3</td><td>speed in knots, plus the phase: <code>VEC</code> <code>DW</code> <code>BASE</code> <code>FIN</code> <code>LOC</code> <code>HLD</code></td></tr>
+<tr><td>Label line 3</td><td>speed in knots, plus the phase: <code>ARR</code> <code>VEC</code> <code>DW</code> <code>BASE</code> <code>FIN</code> <code>LOC</code> <code>HLD</code></td></tr>
 <tr><td>Colours</td><td>green normal · blue cleared to land · red in conflict</td></tr>
 <tr><td>Line from the dot</td><td>current heading · dots behind show the track, one every 2 s</td></tr>
-<tr><td>Dotted lines</td><td>grey: final approach course · dark green: the two downwinds</td></tr>
-<tr><td>Triangles</td><td>holding fixes ALPHA and BRAVO</td></tr>
+<tr><td>Lines</td><td>grey dotted: final approach course · dark green dotted: the two downwinds · dark solid: the STAR routes</td></tr>
+<tr><td>Triangles</td><td>fixes. ALPHA and BRAVO are the holding and merge fixes</td></tr>
 <tr><td>Log colours</td><td>teal: controller calls (<code>&gt;</code> you, <code>JEV →</code>, <code>ATC →</code>) · green: aircraft</td></tr>
 </table></div>
 
