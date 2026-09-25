@@ -74,14 +74,14 @@ A JSON answer such as `{"answers":{"q":{"type":"noul","noul":0.98}}}` means it's
 
 ### Notes
 
-- **Cost and abuse:** `/api/jev` is limited to 10 minutes per browser plus a per-IP rate limit (see [Usage limit](#usage-limit-protecting-your-credits)). Connect Upstash Redis, or the IP limit only applies per function instance. For a private deployment, add [Vercel deployment protection](https://vercel.com/docs/security/deployment-protection).
+- **Cost and abuse:** `/api/jev` is limited to 30 minutes per browser per day plus a per-IP rate limit (see [Usage limit](#usage-limit-protecting-your-credits)). Connect Upstash Redis, or the IP limit only applies per function instance. For a private deployment, add [Vercel deployment protection](https://vercel.com/docs/security/deployment-protection).
 - Optionally set `SESSION_MINUTES` and `SESSION_SECRET` in the Vercel environment variables. `vercel env add` works the same way as for the key.
 - **Jev ATC traffic:** each call batches every aircraft into one request, about every 4 s while Jev ATC is on, per open browser tab.
 - **Latency:** a 5-aircraft Jev ATC batch took 0.25–0.75 s in testing, well within Vercel's default function timeout.
 
 ## Usage limit (protecting your credits)
 
-Each browser gets **10 minutes of Jev time**. The clock starts at its first Jev call and the allowance renews after 24 hours. It's enforced on the server in `api/_jev.js`:
+Each browser gets **30 minutes of Jev time per day**. The clock starts at its first Jev call and keeps running whether or not you're playing; the allowance renews 24 hours later. It's enforced on the server in `api/_jev.js`:
 
 - The first call sets a signed, HttpOnly cookie holding the session start time. Once the time is up, `/api/jev` returns `429` and never calls TypeSafe. Reloading the page doesn't reset it.
 - Requests over 64 KB are rejected with `413`.
@@ -90,17 +90,17 @@ Each browser gets **10 minutes of Jev time**. The clock starts at its first Jev 
 The cookie alone can be reset by clearing cookies or opening a private window, so there's also a **per-IP rate limit**:
 
 - **30 requests per minute** per IP. Jev ATC makes about 15 a minute, so this only blocks scripts that fire requests fast. The page waits out the `Retry-After` time and carries on.
-- **300 requests per day** per IP. That's about 2 full 10-minute sessions (Jev ATC makes ~15 requests a minute). Raise it if many players share one network. The count resets at 00:00 UTC. Once it's reached, the page switches Jev off for the day.
+- **900 requests per day** per IP. That's about 2 full 30-minute sessions (Jev ATC makes ~15 requests a minute). Raise it if many players share one network. The count resets at 00:00 UTC. Once it's reached, the page switches Jev off for the day.
 - Counters are stored in **Upstash Redis** when it's configured, which is needed on Vercel because function instances don't share memory. Without it they're kept in memory: exact for `node server.js`, but only per instance on Vercel.
 - If Redis is configured but unreachable, `/api/jev` returns `503` instead of calling Jev.
 - On Vercel the IP comes from `x-real-ip` / `x-forwarded-for`, which Vercel sets itself. The local server uses the socket address, so forwarded headers can't be spoofed.
 
 | Env var | Default | Purpose |
 |---|---|---|
-| `SESSION_MINUTES` | `10` | Jev time per browser per day |
+| `SESSION_MINUTES` | `30` | Jev time per browser per day |
 | `SESSION_SECRET` | the API key | HMAC secret used to sign the session cookie |
 | `IP_MINUTE_LIMIT` | `30` | Requests per IP per minute |
-| `IP_DAILY_LIMIT` | `300` | Requests per IP per day (UTC) |
+| `IP_DAILY_LIMIT` | `900` | Requests per IP per day (UTC) |
 | `KV_REST_API_URL`, `KV_REST_API_TOKEN` | – | Upstash Redis REST credentials. `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` also work |
 
 Setting a spending limit in the TypeSafe console is the final backstop.
